@@ -3,7 +3,105 @@ import os
 import hashlib
 import datetime
 
-import os
+# --- PostgreSQL / Supabase Compatibility Wrapper ---
+class CursorWrapper:
+    def __init__(self, cursor, is_postgres=False):
+        self._cursor = cursor
+        self._is_postgres = is_postgres
+        self._lastrowid = None
+
+    def execute(self, query, params=None):
+        if self._is_postgres:
+            if params is not None:
+                query = query.replace('?', '%s')
+            
+            # Translate common SQLite table creation syntax to PostgreSQL
+            import re
+            query = re.sub(r'DEFAULT\s+"([^"]*)"', r"DEFAULT '\1'", query, flags=re.IGNORECASE)
+            if "CREATE TABLE" in query or "ALTER TABLE" in query:
+                query = query.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
+                query = query.replace("PRIMARY KEY AUTOINCREMENT", "PRIMARY KEY")
+                query = query.replace("DATETIME", "TIMESTAMP")
+                query = query.replace("AUTOINCREMENT", "")
+            
+            try:
+                if params is not None:
+                    self._cursor.execute(query, params)
+                else:
+                    self._cursor.execute(query)
+                
+                # Caching lastrowid for INSERT queries
+                stripped = query.strip().upper()
+                if stripped.startswith("INSERT"):
+                    try:
+                        self._cursor.execute("SELECT lastval()")
+                        self._lastrowid = self._cursor.fetchone()[0]
+                    except:
+                        self._lastrowid = None
+            except Exception as e:
+                # Map PostgreSQL errors to SQLite errors for transparent catch in database.py
+                err_msg = str(e).lower()
+                if "already exists" in err_msg or "duplicate column" in err_msg or "duplicate_column" in err_msg:
+                    raise sqlite3.OperationalError(str(e))
+                elif "unique constraint" in err_msg or "duplicate key" in err_msg or "unique_violation" in err_msg:
+                    raise sqlite3.IntegrityError(str(e))
+                else:
+                    raise e
+        else:
+            if params is not None:
+                self._cursor.execute(query, params)
+            else:
+                self._cursor.execute(query)
+            self._lastrowid = self._cursor.lastrowid
+
+    def executemany(self, query, seq_of_parameters):
+        if self._is_postgres:
+            query = query.replace('?', '%s')
+            try:
+                self._cursor.executemany(query, seq_of_parameters)
+            except Exception as e:
+                err_msg = str(e).lower()
+                if "unique constraint" in err_msg or "duplicate key" in err_msg:
+                    raise sqlite3.IntegrityError(str(e))
+                else:
+                    raise e
+        else:
+            self._cursor.executemany(query, seq_of_parameters)
+
+    def fetchone(self):
+        return self._cursor.fetchone()
+
+    def fetchall(self):
+        return self._cursor.fetchall()
+
+    @property
+    def lastrowid(self):
+        return self._lastrowid
+
+class PgConnectionWrapper:
+    def __init__(self, conn):
+        self._conn = conn
+        try:
+            self._conn.autocommit = True
+        except:
+            pass
+
+    def cursor(self):
+        return CursorWrapper(self._conn.cursor(), is_postgres=True)
+
+    def commit(self):
+        # Already committed in autocommit mode, prevent Transaction aborted issues
+        pass
+
+    def rollback(self):
+        # No-op in autocommit mode
+        pass
+
+    def close(self):
+        try:
+            self._conn.close()
+        except:
+            pass
 
 os.makedirs('customerdata', exist_ok=True)
 DB_PATH = 'customerdata/masar_home.db'
@@ -13,9 +111,22 @@ DAYS_AR = {
 }
 
 def get_connection():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.execute('PRAGMA journal_mode=WAL')
-    return conn
+    import streamlit as st
+    db_url = None
+    try:
+        if "db_url" in st.secrets:
+            db_url = st.secrets["db_url"]
+    except:
+        pass
+
+    if db_url:
+        import psycopg2
+        conn = psycopg2.connect(db_url)
+        return PgConnectionWrapper(conn)
+    else:
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        conn.execute('PRAGMA journal_mode=WAL')
+        return conn
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
@@ -273,6 +384,10 @@ def init_db():
         pass
     try:
         c.execute('ALTER TABLE FieldVisits ADD COLUMN is_approved INTEGER DEFAULT 0')
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute('ALTER TABLE FieldVisits ADD COLUMN approved_at TEXT DEFAULT ""')
     except sqlite3.OperationalError:
         pass
 
