@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import database as db
+import importlib
+importlib.reload(db)
 import time
 import os
 
@@ -8,6 +10,9 @@ import os
 if 'db_initialized' not in st.session_state:
     db.init_db()
     st.session_state['db_initialized'] = True
+else:
+    # Ensure any new tables are created for existing sessions
+    db.init_db()
 
 
 # Page Config
@@ -21,6 +26,35 @@ st.markdown("""
     /* Hide Deploy Menu and Footer */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
+
+    /* Media Print Styles for Official Forms */
+    @media print {
+        body:has(.printable-card-area) * {
+            display: none !important;
+            visibility: hidden !important;
+            height: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+        body:has(.printable-card-area) .printable-card-area,
+        body:has(.printable-card-area) .printable-card-area * {
+            display: block !important;
+            visibility: visible !important;
+        }
+        body:has(.printable-card-area) .printable-card-area {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            margin: 0 !important;
+            padding: 20px !important;
+            border: none !important;
+            box-shadow: none !important;
+            direction: rtl !important;
+            text-align: right !important;
+        }
+    }
+
     /* Increase Sidebar Width */
     [data-testid="stSidebar"] {
         min-width: 330px !important;
@@ -566,6 +600,7 @@ can_access_production = has_full_access or "إدارة الإنتاج" in user_r
 can_access_finance = has_full_access or "الإدارة المالية" in user_role or user_role == "Financial"
 can_access_journey = has_full_access or "تتبع رحلة العميل" in user_role or "تتبع مسار مشروع / عميل" in user_role or "مسار حركة العميل" in user_role
 can_access_statistics = has_full_access or "إحصائيات" in user_role
+can_access_reports = has_full_access or "مسار التقارير" in user_role or user_role == "Financial"
 can_delete = user_role == "Admin"
 
 # Sidebar Auth Info
@@ -596,7 +631,7 @@ menu = [
     "💬 مسار التواصل",
     "✅ مسار الفحص اليومي",
     "📏 مسار رفع المقاسات",
-    "🎨 مسار التصاميم",
+    "🎨 مسار التصميم",
     "🏷️ مسار التسعير",
     "📋 مسار العقود",
     "💰 مسار الخزينة",
@@ -605,6 +640,7 @@ menu = [
     "🛠️ مسار الدعم الفني",
     "🗺️ مسار حركة العميل",
     "🔍 مسار حركة المستخدم",
+    "📊 مسار التقارير",
     "📈 إحصائيات",
     "ℹ️ حول مسارات"
 ]
@@ -1099,38 +1135,44 @@ elif choice == "📊 لوحة القيادة (Dashboard)":
             
     with dash_col2:
         st.markdown("<div id='col2-header' class='dash-header'>👥 أحدث العملاء</div>", unsafe_allow_html=True)
-        all_custs = db.get_all_customers()
-        if all_custs:
-            conn = db.get_connection()
-            c_db = conn.cursor()
-            latest_custs = sorted(all_custs, key=lambda x: x[0], reverse=True)[:4]
-            for c in latest_custs:
-                c_id, c_name, phone, address, notes = c
+        visits = db.get_all_field_visits()
+        if visits:
+            latest_customers = []
+            seen_names = set()
+            for v in visits:
+                c_name = v[1]
+                phone = v[2]
+                visit_date = v[6]
+                visit_time = v[7]
                 
-                # Find date from FieldVisits
-                c_db.execute("SELECT visit_date FROM FieldVisits WHERE customer_name = ? OR phone = ? ORDER BY id DESC LIMIT 1", (c_name, phone))
-                row_date = c_db.fetchone()
-                if row_date and row_date[0]:
-                    date_str = row_date[0]
-                else:
-                    fallback_dates = {
-                        "ياسر قدور": "2026-06-25",
-                        "معتز البخاري": "2026-06-23",
-                        "شهد هويدي": "2026-06-21",
-                        "علي بن عيسى": "2026-06-19"
-                    }
-                    date_str = fallback_dates.get(c_name, "2026-06-20")
-                    
-                st.markdown(f"""
-                <div class='premium-card'>
-                    <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;'>
-                        <span style='color: #023e8a; font-weight: bold; font-size: 15px;'>{c_name}</span>
-                        <span style='color: #48cae4; font-size: 12px; font-weight: 600; background: rgba(72,202,228,0.1); padding: 2px 8px; border-radius: 10px;'>{date_str}</span>
+                clean_name = c_name.strip()
+                if clean_name not in seen_names:
+                    seen_names.add(clean_name)
+                    latest_customers.append({
+                        "name": clean_name,
+                        "phone": phone or "غير محدد",
+                        "date": visit_date,
+                        "time": visit_time
+                    })
+                if len(latest_customers) >= 4:
+                    break
+            
+            if latest_customers:
+                for c in latest_customers:
+                    st.markdown(f"""
+                    <div class='premium-card'>
+                        <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;'>
+                            <span style='color: #023e8a; font-weight: bold; font-size: 15px;'>{c['name']}</span>
+                            <span style='color: #48cae4; font-size: 12px; font-weight: 600; background: rgba(72,202,228,0.1); padding: 2px 8px; border-radius: 10px;'>{c['date']}</span>
+                        </div>
+                        <div style='color: #6c757d; font-size: 13px; display: flex; justify-content: space-between; align-items: center;'>
+                            <span>📞 <span style='font-family: monospace;'>{c['phone']}</span></span>
+                            <span style='color: gray; font-size: 11px;'>⏰ {c['time']}</span>
+                        </div>
                     </div>
-                    <div style='color: #6c757d; font-size: 13px;'>📞 <span style='font-family: monospace;'>{phone}</span></div>
-                </div>
-                """, unsafe_allow_html=True)
-            conn.close()
+                    """, unsafe_allow_html=True)
+            else:
+                st.info("لم يتم تسجيل عملاء بعد.")
         else:
             st.info("لم يتم تسجيل عملاء بعد.")
             
@@ -1148,7 +1190,13 @@ elif choice == "📊 لوحة القيادة (Dashboard)":
             "سبها": (27.0377, 14.4283)
         }
         
-        selected_city = st.selectbox("اختر المدينة:", list(cities_coords.keys()), label_visibility="collapsed")
+        # Set "الزاوية" as the default selection (index 3)
+        selected_city = st.selectbox(
+            "اختر المدينة:", 
+            list(cities_coords.keys()), 
+            index=list(cities_coords.keys()).index("الزاوية"), 
+            label_visibility="collapsed"
+        )
         lat, lon = cities_coords[selected_city]
         
         w_data = fetch_weather_data(lat, lon)
@@ -1351,7 +1399,7 @@ elif choice == "📊 لوحة القيادة (Dashboard)":
     modules_config = [
         (can_access_checklist, "مسار الفحص اليومي.png", "chk", "✅", "مسار الفحص اليومي", "✅ مسار الفحص اليومي"),
         (can_access_visits, "مسار رفع مقاسات.png", "vis", "📏", "مسار رفع المقاسات", "📏 مسار رفع المقاسات"),
-        (can_access_design, "مسار التصاميم.png", "des", "🎨", "مسار التصاميم", "🎨 مسار التصاميم"),
+        (can_access_design, "مسار التصميم.png", "des", "🎨", "مسار التصميم", "🎨 مسار التصميم"),
         (can_access_pricing, "تسعير.png", "price", "🏷️", "مسار التسعير", "🏷️ مسار التسعير"),
         (can_access_contracts, "عقود.png", "contr", "📋", "مسار العقود", "📋 مسار العقود"),
         (can_access_finance, "مسار الخزينة.png", "fin", "💰", "مسار الخزينة", "💰 مسار الخزينة"),
@@ -1359,9 +1407,10 @@ elif choice == "📊 لوحة القيادة (Dashboard)":
         (can_access_crm, "مسار العملاء.png", "crm", "👥", "مسار العملاء", "👥 مسار العملاء"),
         (can_access_helpdesk, "مسار الدعم الفني.png", "help", "🛠️", "مسار الدعم الفني", "🛠️ مسار الدعم الفني"),
         (can_access_journey, "مسار حركة مشروع - عميل.png", "jour", "🗺️", "مسار حركة العميل", "🗺️ مسار حركة العميل"),
-        (user_role == "Admin", r"C:\Users\PC\Desktop\512\حركات.png", "activity", "🔍", "مسار حركة المستخدم", "🔍 مسار حركة المستخدم"),
+        (user_role == "Admin", "تتبع مستخدم.png", "activity", "🔍", "مسار حركة المستخدم", "🔍 مسار حركة المستخدم"),
+        (can_access_reports, "تقارير.png", "reports", "📊", "مسار التقارير", "📊 مسار التقارير"),
         (can_access_statistics, "احصائيات.png", "stat", "📈", "إحصائيات", "📈 إحصائيات"),
-        (True, r"C:\Users\PC\Desktop\Masarat\512\مسار التواصل.png", "chat", "💬", "مسار التواصل", "💬 مسار التواصل"),
+        (True, "مسار التواصل.png", "chat", "💬", "مسار التواصل", "💬 مسار التواصل"),
         (True, "حول.png", "about", "ℹ️", "حول مسارات", "ℹ️ حول مسارات"),
     ]
         
@@ -1474,35 +1523,254 @@ elif choice == "👥 مسار العملاء":
         st.error("🔒 عذراً، ليس لديك الصلاحية للوصول إلى هذا القسم.")
         st.stop()
         
-    st.markdown("<h2>👥 إدارة العملاء</h2>", unsafe_allow_html=True)
-    
-    tab1, tab2, tab3 = st.tabs(["➕ إضافة عميل جديد", "📋 قائمة العملاء", "✏️ تعديل / حذف عميل"])
-    
-    with tab1:
-        st.info("💡 يتم تسجيل العملاء وإضافتهم تلقائياً عبر قسم **(مسار رفع المقاسات)**. يرجى إدخال العملاء الجدد من هناك لضمان تسجيلهم وتوليد رقم مسارات الخاص بهم تلقائياً.")
+    # Catch query parameters for client profile redirection
+    if "view_customer" in st.query_params:
+        st.session_state['view_customer_profile'] = st.query_params["view_customer"]
         
-    with tab2:
-        visits = db.get_all_field_visits()
-        if visits:
-            formatted_visits = []
-            for v in visits:
-                c_name = v[1]
-                is_canceled = v[20] if len(v) > 20 else 0
-                if is_canceled == 1:
-                    c_name = f"{c_name} ❌ [ملغي/اعتذار]"
-                formatted_visits.append((v[0], f"MHM{v[0]:05d}", c_name, v[2], v[3], v[4]))
+    if st.session_state.get('view_customer_profile'):
+        c_name = st.session_state['view_customer_profile']
+        
+        col_hdr1, col_hdr2 = st.columns([4, 1])
+        with col_hdr1:
+            st.markdown(f"<h2 style='color:#0077b6; font-family: \"Readex Pro\", sans-serif; font-weight:700;'>👥 ملف العميل: {c_name}</h2>", unsafe_allow_html=True)
+        with col_hdr2:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("⬅️ قائمة العملاء", use_container_width=True):
+                st.session_state.pop('view_customer_profile', None)
+                st.query_params.clear()
+                st.rerun()
                 
-            df_customers = pd.DataFrame(
-                formatted_visits,
-                columns=["المعرف", "رقم مسارات", "الاسم", "الهاتف", "العنوان", "الأثاث المطلوب"]
-            )
-            # Add sequence number #
-            df_customers["#"] = range(1, len(df_customers) + 1)
-            # Reverse columns for RTL visual order (right to left: #, رقم مسارات, الاسم, الهاتف, العنوان, الأثاث المطلوب)
-            df_customers = df_customers[["الأثاث المطلوب", "العنوان", "الهاتف", "الاسم", "رقم مسارات", "#"]]
-            st.dataframe(df_customers, use_container_width=True, hide_index=True)
+        st.markdown("---")
+        
+        # Get all visits for this customer
+        visits = db.get_all_field_visits()
+        customer_visits = [v for v in visits if v[1].strip() == c_name.strip()]
+        
+        if not customer_visits:
+            st.warning("⚠️ لم يتم العثور على أي مشاريع أو زيارات لهذا العميل.")
         else:
-            st.info("لا يوجد عملاء مسجلين حالياً.")
+            # Fetch Odoo numbers for all visits
+            conn = db.get_connection()
+            c = conn.cursor()
+            c.execute("SELECT visit_id, odoo_no FROM ProjectDesigns")
+            designs = {row[0]: row[1].strip() for row in c.fetchall() if row[1] and row[1].strip()}
+            c.execute("SELECT client_name, odoo_no, notes FROM Contracts")
+            contracts = c.fetchall()
+            conn.close()
+            
+            def get_odoo_no(v_id, client_n):
+                if v_id in designs:
+                    return designs[v_id]
+                for client_name, odoo_no, notes in contracts:
+                    if odoo_no and odoo_no.strip():
+                        if client_name == client_n:
+                            return odoo_no.strip()
+                        if notes and f"MHM{v_id:05d}" in notes:
+                            return odoo_no.strip()
+                return ""
+            
+            # Show summary metrics in 3 columns
+            total_proj = len(customer_visits)
+            canceled_proj = sum(1 for v in customer_visits if (v[20] if len(v) > 20 else 0) == 1)
+            approved_proj = sum(1 for v in customer_visits if (v[21] if len(v) > 21 else 0) == 1 and (v[20] if len(v) > 20 else 0) == 0)
+            pending_proj = total_proj - canceled_proj - approved_proj
+            
+            col_m1, col_m2, col_m3 = st.columns(3)
+            with col_m1:
+                st.markdown(f"""
+                <div style='background-color:#ffffff; padding:15px; border-radius:10px; border-right:5px solid #0077b6; text-align:center; box-shadow: 0 4px 10px rgba(0,119,182,0.05);'>
+                    <h5 style='color:#0077b6; margin:0; font-family:"Readex Pro",sans-serif;'>إجمالي المشاريع</h5>
+                    <h2 style='color:#03045e; margin:10px 0 0 0; font-family:"Readex Pro",sans-serif; font-weight:700;'>{total_proj}</h2>
+                </div>
+                """, unsafe_allow_html=True)
+            with col_m2:
+                st.markdown(f"""
+                <div style='background-color:#ffffff; padding:15px; border-radius:10px; border-right:5px solid #2e7d32; text-align:center; box-shadow: 0 4px 10px rgba(46,125,50,0.05);'>
+                    <h5 style='color:#2e7d32; margin:0; font-family:"Readex Pro",sans-serif;'>المشاريع المعتمدة</h5>
+                    <h2 style='color:#1b5e20; margin:10px 0 0 0; font-family:"Readex Pro",sans-serif; font-weight:700;'>{approved_proj}</h2>
+                </div>
+                """, unsafe_allow_html=True)
+            with col_m3:
+                st.markdown(f"""
+                <div style='background-color:#ffffff; padding:15px; border-radius:10px; border-right:5px solid #c62828; text-align:center; box-shadow: 0 4px 10px rgba(198,40,40,0.05);'>
+                    <h5 style='color:#c62828; margin:0; font-family:"Readex Pro",sans-serif;'>المشاريع الملغية</h5>
+                    <h2 style='color:#b71c1c; margin:10px 0 0 0; font-family:"Readex Pro",sans-serif; font-weight:700;'>{canceled_proj}</h2>
+                </div>
+                """, unsafe_allow_html=True)
+                
+            st.markdown("<br>", unsafe_allow_html=True)
+            
+            # Show contact details card
+            latest_v = customer_visits[0]
+            phone = latest_v[2] or "غير حدد"
+            address = latest_v[3] or "غير محدد"
+            map_link = latest_v[24] if len(latest_v) > 24 else ""
+            
+            st.markdown("### 📞 معلومات التواصل")
+            col_c1, col_c2 = st.columns(2)
+            with col_c1:
+                st.markdown(f"**📱 رقم الهاتف:** `{phone}`")
+                # Add WhatsApp link
+                wa_phone = phone.replace(" ", "").replace("-", "")
+                if wa_phone.startswith("0"):
+                    wa_phone = "218" + wa_phone[1:]
+                st.markdown(f"[💬 تواصل مباشر عبر الواتساب](https://wa.me/{wa_phone})")
+            with col_c2:
+                st.markdown(f"**📍 العنوان الرئيسي:** {address}")
+                if map_link:
+                    st.markdown(f"[🗺️ موقع العميل على الخريطة]({map_link})")
+                    
+            st.markdown("---")
+            
+            # Show projects list
+            st.markdown("### 📋 قائمة مشاريع العميل")
+            proj_data = []
+            for v in customer_visits:
+                v_id = v[0]
+                m_no = f"MHM{v_id:05d}"
+                o_no = get_odoo_no(v_id, c_name) or "غير محدد"
+                date = v[6]
+                furniture = v[4] or "غير محدد"
+                val = f"{v[8]:,.2f} د.ل" if v[8] else "0.00 د.ل"
+                
+                is_canceled = v[20] if len(v) > 20 else 0
+                is_approved = v[21] if len(v) > 21 else 0
+                
+                if is_canceled == 1:
+                    status = "❌ ملغي/اعتذار"
+                elif is_approved == 1:
+                    status = "✅ معتمد للتصميم"
+                else:
+                    status = "⏳ بانتظار الاعتماد"
+                    
+                proj_data.append({
+                    "رقم مسارات": m_no,
+                    "رقم أودو": o_no,
+                    "التاريخ": date,
+                    "نوع الأثاث المطلوب": furniture,
+                    "قيمة رفع المقاسات": val,
+                    "حالة المشروع": status
+                })
+                
+            df_proj = pd.DataFrame(proj_data)
+            df_proj = df_proj[["حالة المشروع", "قيمة رفع المقاسات", "نوع الأثاث المطلوب", "التاريخ", "رقم أودو", "رقم مسارات"]]
+            st.dataframe(df_proj, use_container_width=True, hide_index=True)
+            
+    else:
+        st.markdown("<h2>👥 إدارة العملاء</h2>", unsafe_allow_html=True)
+        
+        tab1, tab2, tab3 = st.tabs(["➕ إضافة عميل جديد", "📋 قائمة العملاء", "✏️ تعديل / حذف عميل"])
+        
+        with tab1:
+            st.info("💡 يتم تسجيل العملاء وإضافتهم تلقائياً عبر قسم **(مسار رفع المقاسات)**. يرجى إدخال العملاء الجدد من هناك لضمان تسجيلهم وتوليد رقم مسارات الخاص بهم تلقائياً.")
+            
+        with tab2:
+            visits = db.get_all_field_visits()
+            if visits:
+                # Fetch Odoo numbers for all visits
+                conn = db.get_connection()
+                c = conn.cursor()
+                c.execute("SELECT visit_id, odoo_no FROM ProjectDesigns")
+                designs = {row[0]: row[1].strip() for row in c.fetchall() if row[1] and row[1].strip()}
+                c.execute("SELECT client_name, odoo_no, notes FROM Contracts")
+                contracts = c.fetchall()
+                conn.close()
+                
+                def get_odoo_no(v_id, client_n):
+                    if v_id in designs:
+                        return designs[v_id]
+                    for client_name, odoo_no, notes in contracts:
+                        if odoo_no and odoo_no.strip():
+                            if client_name == client_n:
+                                return odoo_no.strip()
+                            if notes and f"MHM{v_id:05d}" in notes:
+                                return odoo_no.strip()
+                    return ""
+
+                from collections import defaultdict
+                grouped = defaultdict(list)
+                for v in visits:
+                    grouped[v[1].strip()].append(v)
+                    
+                formatted_customers = []
+                for name, customer_visits in grouped.items():
+                    project_count = len(customer_visits)
+                    
+                    masarat_nos = [f"MHM{v[0]:05d}" for v in customer_visits]
+                    masarat_str = ", ".join(masarat_nos)
+                    
+                    odoo_nos = []
+                    for v in customer_visits:
+                        o_no = get_odoo_no(v[0], name)
+                        if o_no and o_no not in odoo_nos:
+                            odoo_nos.append(o_no)
+                    odoo_str = ", ".join(odoo_nos) if odoo_nos else "لا يوجد"
+                    
+                    latest_v = customer_visits[0]
+                    phone = latest_v[2] or "غير محدد"
+                    address = latest_v[3] or "غير محدد"
+                    
+                    furniture_list = []
+                    for v in customer_visits:
+                        f_type = v[4]
+                        if f_type:
+                            for item in f_type.split("،"):
+                                item = item.strip()
+                                if item and item not in furniture_list:
+                                    furniture_list.append(item)
+                    furniture_str = ", ".join(furniture_list) if furniture_list else "لم يتم التحديد"
+                    
+                    formatted_customers.append({
+                        "الاسم": name,
+                        "عدد المشاريع": project_count,
+                        "أرقام مسارات": masarat_str,
+                        "أرقام أودو": odoo_str,
+                        "الهاتف": phone,
+                        "العنوان": address,
+                        "الأثاث المطلوب": furniture_str
+                    })
+                
+                # Render HTML table with links to customer profile
+                html_rows = ""
+                for idx, r in enumerate(formatted_customers):
+                    c_link = f'<a href="?view_customer={r["الاسم"]}" target="_self" style="color:#0077b6; text-decoration:underline; font-weight:bold;">{r["الاسم"]}</a>'
+                    html_rows += f"""
+                    <tr style="border-bottom:1px solid #e0e0e0; hover: background-color:#f5f5f5;">
+                        <td style="padding:10px; text-align:center;">{idx+1}</td>
+                        <td style="padding:10px; font-weight:bold;">{c_link}</td>
+                        <td style="padding:10px; text-align:center; color:#03045e; font-weight:bold;">{r["عدد المشاريع"]}</td>
+                        <td style="padding:10px; direction:ltr; text-align:right;">{r["أرقام مسارات"]}</td>
+                        <td style="padding:10px; direction:ltr; text-align:right;">{r["أرقام أودو"]}</td>
+                        <td style="padding:10px; font-family:monospace; text-align:right;">{r["الهاتف"]}</td>
+                        <td style="padding:10px;">{r["العنوان"]}</td>
+                        <td style="padding:10px; font-size:13px; color:gray;">{r["الأثاث المطلوب"]}</td>
+                    </tr>
+                    """
+                
+                html_table = f"""
+                <div style="overflow-x:auto; direction:rtl;">
+                    <table style="width:100%; border-collapse:collapse; text-align:right; font-family:'Readex Pro', sans-serif; background-color:white; border-radius:10px; overflow:hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
+                        <thead>
+                            <tr style="background: linear-gradient(135deg, #0077b6 0%, #023e8a 100%); color:white;">
+                                <th style="padding:12px; text-align:center; border-top-right-radius:8px;">#</th>
+                                <th style="padding:12px;">اسم العميل (انقر للملف)</th>
+                                <th style="padding:12px; text-align:center;">عدد المشاريع</th>
+                                <th style="padding:12px; text-align:right;">أرقام مسارات</th>
+                                <th style="padding:12px; text-align:right;">أرقام أودو</th>
+                                <th style="padding:12px; text-align:right;">الهاتف</th>
+                                <th style="padding:12px;">العنوان</th>
+                                <th style="padding:12px; border-top-left-radius:8px;">الأثاث المطلوب</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {html_rows}
+                        </tbody>
+                    </table>
+                </div>
+                """
+                st.markdown(html_table, unsafe_allow_html=True)
+            else:
+                st.info("لا يوجد عملاء مسجلين حالياً.")
             
     with tab3:
         visits = db.get_all_field_visits()
@@ -1685,7 +1953,7 @@ elif choice == "🛠️ مسار الدعم الفني":
         else:
             st.info("لا توجد تذاكر حالياً.")
 
-elif choice == "🎨 مسار التصاميم":
+elif choice == "🎨 مسار التصميم":
     from modules import mod_design
     import importlib
     importlib.reload(mod_design)
@@ -1726,6 +1994,12 @@ elif choice == "📈 إحصائيات":
     import importlib
     importlib.reload(mod_statistics)
     mod_statistics.render_page(can_access_statistics, is_observer)
+
+elif choice == "📊 مسار التقارير":
+    from modules import mod_reports
+    import importlib
+    importlib.reload(mod_reports)
+    mod_reports.render_page(can_access_reports, is_observer)
 
 elif choice == "ℹ️ حول مسارات":
     st.markdown("<br>", unsafe_allow_html=True)
@@ -1793,7 +2067,7 @@ elif choice == "⚙️ إدارة الحسابات":
     st.markdown("<h2 style='text-align: center;'>⚙️ إدارة الحسابات والصلاحيات</h2>", unsafe_allow_html=True)
     
     all_users = db.get_all_users()
-    sections_list = ["الجميع", "قائمة الفحص اليومي", "الزيارة الميدانية", "إدارة العملاء", "الدعم الفني", "إدارة التصاميم", "إدارة الإنتاج", "الإدارة المالية", "تتبع مسار حركة العميل", "إحصائيات", "Observer"]
+    sections_list = ["الجميع", "قائمة الفحص اليومي", "الزيارة الميدانية", "إدارة العملاء", "الدعم الفني", "إدارة التصاميم", "إدارة الإنتاج", "الإدارة المالية", "تتبع مسار حركة العميل", "إحصائيات", "مسار التقارير", "Observer"]
     
     top_tab1, top_tab2 = st.tabs(["➕ إضافة حساب جديد", "✏️ تعديل حساب موجود"])
     
