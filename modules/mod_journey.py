@@ -76,7 +76,7 @@ def render_page(can_access_journey, is_observer):
         d_icon = "🟢" if "مكتمل" in design_info[1] else "🔵"
         st.markdown(f"""
         <div style='background-color: #ffffff; border-right: 5px solid #00b4d8; padding: 15px; border-radius: 8px; margin-bottom: 12px;'>
-            <h4 style='color: #0077b6; margin: 0;'>2. مسار التصميم {d_icon}</h4>
+            <h4 style='color: #0077b6; margin: 0;'>2. مسار التصاميم {d_icon}</h4>
             <p style='margin: 5px 0 0 0; font-size: 14px;'>
                 <b>المصمم المسؤول:</b> {design_info[0]} | <b>حالة التصميم:</b> {design_info[1]}<br>
                 <b>الملاحظات:</b> {design_info[2] or 'لا توجد'}
@@ -86,7 +86,7 @@ def render_page(can_access_journey, is_observer):
     else:
         st.markdown("""
         <div style='background-color: #f5f5f5; border-right: 5px solid #9e9e9e; padding: 15px; border-radius: 8px; margin-bottom: 12px; opacity: 0.6;'>
-            <h4 style='color: #616161; margin: 0;'>2. مسار التصميم ⏳</h4>
+            <h4 style='color: #616161; margin: 0;'>2. مسار التصاميم ⏳</h4>
             <p style='margin: 5px 0 0 0; font-size: 14px;'>بانتظار تعيين مصمم وبدء العمل على التصاميم المقترحة للعميل.</p>
         </div>
         """, unsafe_allow_html=True)

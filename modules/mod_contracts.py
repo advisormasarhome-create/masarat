@@ -57,9 +57,9 @@ def _render_clients_tab():
     c = conn.cursor()
     c.execute('''
         SELECT f.id, f.customer_name, f.phone, f.address, f.furniture_type, f.site_status, f.visit_date,
-               COALESCE(d.price_final, 0.0), COALESCE(d.odoo_no, '')
+               COALESCE(d.price_final, 0.0), COALESCE(d.odoo_no, ''), COALESCE(d.design_docs, ''), COALESCE(d.workshop_drawing, ''), COALESCE(d.notes, '')
         FROM FieldVisits f
-        INNER JOIN ProjectDesigns d ON f.id = d.visit_id AND d.price_is_approved = 1 AND d.contract_is_approved = 0
+        INNER JOIN ProjectDesigns d ON f.id = d.visit_id AND d.price_is_paid = 1 AND d.contract_is_approved = 0
         WHERE f.is_canceled = 0
         ORDER BY f.id DESC
     ''')
@@ -67,7 +67,7 @@ def _render_clients_tab():
     conn.close()
 
     if not clients:
-        st.info("ℹ️ لا يوجد عملاء بانتظار التعاقد حالياً (العملاء يظهرون هنا تلقائياً بعد اعتماد التسعيرة في مسار التصميم).")
+        st.info("ℹ️ لا يوجد عملاء بانتظار التعاقد حالياً (العملاء يظهرون هنا تلقائياً بعد اعتماد التسعيرة في مسار التصاميم).")
         return
 
     # بحث وتصفية
@@ -124,6 +124,9 @@ def _render_clients_tab():
                 st.session_state['selected_client_phone'] = phone
                 st.session_state['selected_client_value'] = price_final
                 st.session_state['selected_client_odoo_no'] = odoo_no
+                st.session_state['selected_client_design_docs'] = design_docs
+                st.session_state['selected_client_workshop'] = workshop
+                st.session_state['selected_client_design_notes'] = design_notes
                 st.rerun()
 
 # ────────────────────────────────────────────────
@@ -140,6 +143,9 @@ def _render_add_tab(emp_name: str):
     default_phone = st.session_state.get('selected_client_phone', "")
     default_value = st.session_state.get('selected_client_value', 0.0)
     default_odoo = st.session_state.get('selected_client_odoo_no', "")
+    default_design_docs = st.session_state.get('selected_client_design_docs', "")
+    default_workshop = st.session_state.get('selected_client_workshop', "")
+    default_design_notes = st.session_state.get('selected_client_design_notes', "")
     
     if default_name:
         st.info(f"💡 تم تعبئة البيانات تلقائياً للعميل المختار: **{default_name}**")
@@ -149,6 +155,9 @@ def _render_add_tab(emp_name: str):
             st.session_state.pop('selected_client_phone', None)
             st.session_state.pop('selected_client_value', None)
             st.session_state.pop('selected_client_odoo_no', None)
+            st.session_state.pop('selected_client_design_docs', None)
+            st.session_state.pop('selected_client_workshop', None)
+            st.session_state.pop('selected_client_design_notes', None)
             st.rerun()
 
     with st.form("add_contract_form", clear_on_submit=True):
@@ -166,7 +175,19 @@ def _render_add_tab(emp_name: str):
             status        = st.selectbox("📌 حالة العقد", STATUS_OPTIONS)
             odoo_no       = st.text_input("🔢 رقم اودو المرجعي (Odoo Number)", value=default_odoo)
 
-        notes = st.text_area("📋 ملاحظات", height=80)
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown("#### استدعاء المواصفات الفنية المؤرشفة")
+        if default_design_notes:
+            st.info(f"**ملاحظات التصميم:** {default_design_notes}")
+        if default_design_docs:
+            st.markdown(f"📄 **المخطط الرئيسي:** [عرض الملف]({default_design_docs})")
+        if default_workshop:
+            st.markdown(f"🏭 **مخطط الورشة:** [عرض الملف]({default_workshop})")
+        if not default_design_docs and not default_workshop and not default_design_notes:
+            st.warning("لا توجد مواصفات فنية مرفقة من قسم التصميم.")
+        st.markdown("<hr>", unsafe_allow_html=True)
+
+        notes = st.text_area("📋 ملاحظات إضافية للعقد", height=80)
         attachments = st.file_uploader(
             "📎 مرفقات العقد (PDF / صور)",
             accept_multiple_files=True,
@@ -210,7 +231,7 @@ def _render_add_tab(emp_name: str):
             if btn_approve and default_visit_id:
                 conn = db.get_connection()
                 c = conn.cursor()
-                c.execute("UPDATE ProjectDesigns SET contract_is_approved = 1 WHERE visit_id = ?", (default_visit_id,))
+                c.execute("UPDATE ProjectDesigns SET contract_is_approved = 1, is_sent_to_production = 1 WHERE visit_id = ?", (default_visit_id,))
                 conn.commit()
                 conn.close()
 
@@ -220,7 +241,9 @@ def _render_add_tab(emp_name: str):
             st.session_state.pop('selected_client_phone', None)
             st.session_state.pop('selected_client_value', None)
             st.session_state.pop('selected_client_odoo_no', None)
-            
+            st.session_state.pop('selected_client_design_docs', None)
+            st.session_state.pop('selected_client_workshop', None)
+            st.session_state.pop('selected_client_design_notes', None)
             if btn_approve:
                 st.session_state["contracts_success"] = f"✅ تم حفظ واعتماد العقد [{contract_no}] بنجاح ونقله للخزينة!"
             else:
@@ -277,30 +300,12 @@ def _render_contract_card(row, can_edit: bool, is_admin: bool, emp_name: str):
 
             st.caption(f"👤 أُنشئ بواسطة: {created_by}  |  آخر تعديل: {last_mod_by} ({last_mod_at[:16] if last_mod_at else '—'})")
 
-        # Check if this contract is approved in ProjectDesigns
-        conn = db.get_connection()
-        c = conn.cursor()
-        c.execute("""
-            SELECT contract_is_approved 
-            FROM ProjectDesigns d
-            JOIN FieldVisits f ON d.visit_id = f.id
-            WHERE f.customer_name = ? OR (d.odoo_no = ? AND d.odoo_no != '')
-        """, (client_name, odoo_no))
-        row_approved = c.fetchone()
-        conn.close()
-        
-        contract_is_approved = row_approved[0] if row_approved else 0
-        is_admin_user = is_admin
-        can_modify_contract = (contract_is_approved == 0) or is_admin_user
-
         with action_col:
             if can_edit:
-                if not can_modify_contract:
-                    st.caption("🔒 معتمد للخزينة")
-                if st.button("✏️ تعديل سجل", key=f"edit_btn_{cid}", use_container_width=True, disabled=not can_modify_contract):
+                if st.button("✏️ تعديل سجل", key=f"edit_btn_{cid}", use_container_width=True):
                     st.session_state[f"edit_contract_{cid}"] = True
                 if is_admin:
-                    if st.button("🗑️ حذف سجل", key=f"del_btn_{cid}", use_container_width=True, disabled=not can_modify_contract):
+                    if st.button("🗑️ حذف سجل", key=f"del_btn_{cid}", use_container_width=True):
                         st.session_state[f"confirm_del_{cid}"] = True
 
         # ── تأكيد الحذف ──
@@ -319,7 +324,7 @@ def _render_contract_card(row, can_edit: bool, is_admin: bool, emp_name: str):
                     st.rerun()
 
         # ── نموذج التعديل ──
-        if st.session_state.get(f"edit_contract_{cid}") and can_edit and can_modify_contract:
+        if st.session_state.get(f"edit_contract_{cid}") and can_edit:
             st.markdown("---")
             st.markdown("**✏️ تعديل بيانات العقد:**")
             with st.form(f"edit_form_{cid}"):

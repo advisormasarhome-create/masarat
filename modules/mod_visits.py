@@ -49,7 +49,7 @@ def render_page(can_access_visits, is_observer):
             site_status_note = st.text_area("ملاحظات عن حالة الموقع:", placeholder="اكتب ملاحظات توضيحية عن وضع الموقع...")
     with col2:
         phone = st.text_input("2. رقم هاتف العميل")
-        furniture_options = ["بيت كامل", "مطبخ", "غرفة نوم", "غرفة ملابس", "ديكور شاشة", "مدخل", "جلسة", "صيدلية", "محل تجاري", "مطعم", "مقهى", "مكتب اداري", "ستائر", "استراحة", "منتجات اخرى"]
+        furniture_options = ["بيت كامل", "مطبخ", "غرفة نوم", "غرفة ملابس", "ديكور شاشة", "مدخل", "جلسة", "صيدلية", "محل تجاري", "مطعم", "مقهى", "مكتب اداري", "منتجات اخرى"]
         selected_furniture = st.multiselect("4. نوع الأثاث المطلوب", furniture_options)
         if "منتجات اخرى" in selected_furniture:
             other_furniture = st.text_input("يرجى تحديد نوع المنتج:")
@@ -94,32 +94,11 @@ def render_page(can_access_visits, is_observer):
     
     payment_status = st.radio("حالة الدفع", ["تم الدفع", "لم يتم بعد"], horizontal=True)
     st.markdown("<div class='force-center'><h3 class='header-box' style='color: #0d8a95; font-family: \"Readex Pro\", sans-serif; font-weight: 600; margin-top: 25px; margin-bottom: 20px; font-size: 28px;'>مسار الزيارة الميدانية</h3></div>", unsafe_allow_html=True)
-    import datetime
-    is_future = False
-    try:
-        time_part, period = visit_time.split()
-        hour_str, min_str = time_part.split(":")
-        hour = int(hour_str)
-        minute = int(min_str)
-        if period == "مساءً" and hour < 12:
-            hour += 12
-        elif period == "صباحاً" and hour == 12:
-            hour = 0
-        v_t = datetime.time(hour, minute)
-        v_dt = datetime.datetime.combine(visit_date, v_t)
-        is_future = datetime.datetime.now() < v_dt
-    except:
-        is_future = datetime.date.today() < visit_date
-        
-    default_status = "ليس بعد" if is_future else "تمت"
-
     st.markdown("<h3 style='background-color: #e0e0e0; padding: 10px; border-radius: 5px; text-align: center;'>حالة رفع المقاسات</h3>", unsafe_allow_html=True)
-    m_options = ["تمت", "لم تتم", "ليس بعد"]
-    m_idx = m_options.index(default_status)
-    measurement_completed = st.radio("هل تمت عملية رفع المقاسات بنجاح؟", m_options, index=m_idx, horizontal=True)
+    measurement_completed = st.radio("هل تمت عملية رفع المقاسات بنجاح؟", ["نعم", "لا"], horizontal=True)
     
     measurement_reason = ""
-    if measurement_completed == "لم تتم":
+    if measurement_completed == "لا":
         measurement_reason = st.text_area("سبب عدم اتمام عملية رفع المقاسات:", placeholder="اكتب السبب هنا...")
 
     document_revision_completed = ""
@@ -175,7 +154,7 @@ def render_page(can_access_visits, is_observer):
                         details=f"تم إضافة سجل زيارة ميدانية للعميل مع الاعتماد للتصميم: {customer_name}" if save_approve_btn else f"تم إضافة سجل زيارة ميدانية للعميل: {customer_name}"
                     )
                     if save_approve_btn:
-                        st.success("تم حفظ السجل واعتماده ونقله لمسار التصميم بنجاح!")
+                        st.success("تم حفظ السجل واعتماده ونقله لمسار التصاميم بنجاح!")
                     else:
                         st.success("تم حفظ السجل بنجاح مع المرفقات!")
                     time.sleep(2)
@@ -254,39 +233,7 @@ def render_page(can_access_visits, is_observer):
                     new_phone = st.text_input("رقم هاتف العميل:", value=phone, key=f"phone_{v_id}")
                     new_address = st.text_area("العنوان بالتفصيل:", value=address, key=f"address_{v_id}")
                     new_map_link = st.text_input("رابط موقع العميل على خرائط جوجل (اختياري)", value=m_link, key=f"mlink_{v_id}")
-                    # Requirement 2: Multiselect dropdown for requested furniture in edit mode
-                    default_selections = []
-                    furniture_options = ["بيت كامل", "مطبخ", "غرفة نوم", "غرفة ملابس", "ديكور شاشة", "مدخل", "جلسة", "صيدلية", "محل تجاري", "مطعم", "مقهى", "مكتب اداري", "ستائر", "استراحة", "منتجات اخرى"]
-                    if f_type:
-                        raw_selections = [x.strip() for x in f_type.split("،") if x.strip()]
-                        if not raw_selections:
-                            raw_selections = [x.strip() for x in f_type.split(",") if x.strip()]
-                        for item in raw_selections:
-                            if item in furniture_options:
-                                default_selections.append(item)
-                            elif item.startswith("أخرى (") and item.endswith(")"):
-                                if "منتجات اخرى" not in default_selections:
-                                    default_selections.append("منتجات اخرى")
-                            else:
-                                if "منتجات اخرى" not in default_selections:
-                                    default_selections.append("منتجات اخرى")
-                    
-                    new_furniture_sel = st.multiselect("نوع الأثاث المطلوب:", furniture_options, default=default_selections, key=f"fur_sel_{v_id}")
-                    new_other_fur = ""
-                    if "منتجات اخرى" in new_furniture_sel:
-                        old_custom_val = ""
-                        if f_type:
-                            raw_selections = [x.strip() for x in f_type.split("،") if x.strip()]
-                            for item in raw_selections:
-                                if item not in furniture_options:
-                                    old_custom_val = item
-                                elif item.startswith("أخرى (") and item.endswith(")"):
-                                    old_custom_val = item[6:-1]
-                        new_other_fur = st.text_input("يرجى تحديد نوع المنتج الآخر:", value=old_custom_val, key=f"other_fur_{v_id}")
-                    
-                    final_selections = [f"أخرى ({new_other_fur})" if item == "منتجات اخرى" and new_other_fur else item for item in new_furniture_sel]
-                    new_furniture = "، ".join(final_selections) if final_selections else "لم يتم التحديد"
-                    
+                    new_furniture = st.text_input("نوع الأثاث المطلوب:", value=f_type, key=f"fur_{v_id}")
                     new_site_status = st.selectbox("حالة الموقع:", ["جاهز", "تحت التشطيب"], index=0 if s_status=="جاهز" else 1, key=f"site_{v_id}")
                     new_site_status_note = s_note
                     if new_site_status == "تحت التشطيب":
@@ -317,43 +264,8 @@ def render_page(can_access_visits, is_observer):
                         new_design_value = st.number_input("قيمة التصميم (دينار ليبي):", value=float(d_val) if d_val else 0.0, step=50.0, key=f"dval_{v_id}")
                     
                     new_payment_status = st.radio("حالة الدفع:", ["تم الدفع", "لم يتم بعد"], index=0 if p_status in ["تم الدفع في الصالة", "تم الدفع"] else 1, key=f"pstat_{v_id}")
-                    
-                    # Determine current status from database
-                    current_status = m_comp
-                    if current_status == "نعم":
-                        current_status = "تمت"
-                    elif current_status == "لا":
-                        current_status = "لم تتم"
-                    
-                    # Auto-check if visit date/time is in future when status is "ليس بعد" or empty
-                    if not current_status or current_status == "ليس بعد" or current_status == "":
-                        is_future = False
-                        try:
-                            time_part, period = new_visit_time.split()
-                            hour_str, min_str = time_part.split(":")
-                            hour = int(hour_str)
-                            minute = int(min_str)
-                            if period == "مساءً" and hour < 12:
-                                hour += 12
-                            elif period == "صباحاً" and hour == 12:
-                                hour = 0
-                            v_t = datetime.time(hour, minute)
-                            v_dt = datetime.datetime.combine(new_visit_date, v_t)
-                            is_future = datetime.datetime.now() < v_dt
-                        except:
-                            is_future = datetime.date.today() < new_visit_date
-                        
-                        if is_future:
-                            current_status = "ليس بعد"
-                        else:
-                            current_status = "لم تتم"
-                    
-                    m_comp_options = ["تمت", "لم تتم", "ليس بعد"]
-                    m_comp_idx = m_comp_options.index(current_status) if current_status in m_comp_options else 2
-                    new_m_comp = st.radio("حالة رفع المقاسات:", m_comp_options, index=m_comp_idx, key=f"mcomp_{v_id}", horizontal=True)
-                    new_m_rsn = ""
-                    if new_m_comp == "لم تتم":
-                        new_m_rsn = st.text_area("سبب عدم اتمام عملية رفع المقاسات:", value=m_rsn, key=f"mrsn_{v_id}")
+                    new_m_comp = st.radio("حالة رفع المقاسات:", ["نعم", "لا"], index=0 if m_comp=="نعم" else 1, key=f"mcomp_{v_id}")
+                    new_m_rsn = st.text_area("سبب عدم اتمام عملية رفع المقاسات:", value=m_rsn, key=f"mrsn_{v_id}")
                     new_d_comp = ""
                     new_d_rsn = ""
                     st.markdown("**إضافة ملفات جديدة (ستضاف للملفات السابقة):**")
@@ -459,18 +371,14 @@ def render_page(can_access_visits, is_observer):
                     is_admin_user = (st.session_state.get('username') == 'Admin' or st.session_state.get('role') == 'Admin')
                     
                     if not is_observer:
-                        can_modify = (is_approved == 0) or is_admin_user
-                        if not can_modify:
-                            st.warning("🔒 هذا السجل معتمد ولا يمكن تعديله أو إلغاؤه إلا من قبل مدير النظام (الأدمن).")
-                        
                         ecol1, ecol2, ecol3 = st.columns(3)
                         with ecol1:
-                            if st.button("✏️ تعديل سجل المشروع", use_container_width=True, key=f"btn_edit_{v_id}", disabled=not can_modify):
+                            if st.button("✏️ تعديل سجل المشروع", use_container_width=True, key=f"btn_edit_{v_id}"):
                                 st.session_state[edit_key] = True
                                 st.rerun()
                         with ecol2:
                             if is_canceled == 0:
-                                if st.button("❌ إلغاء/اعتذار العميل", use_container_width=True, key=f"btn_cancel_proj_{v_id}", disabled=not can_modify):
+                                if st.button("❌ إلغاء/اعتذار العميل", use_container_width=True, key=f"btn_cancel_proj_{v_id}"):
                                     conn = db.get_connection()
                                     c = conn.cursor()
                                     c.execute("UPDATE FieldVisits SET is_canceled = 1 WHERE id = ?", (v_id,))
@@ -487,7 +395,7 @@ def render_page(can_access_visits, is_observer):
                                     time.sleep(1)
                                     st.rerun()
                             else:
-                                if st.button("🔄 استعادة تفعيل المشروع", use_container_width=True, key=f"btn_activate_proj_{v_id}", disabled=not can_modify):
+                                if st.button("🔄 استعادة تفعيل المشروع", use_container_width=True, key=f"btn_activate_proj_{v_id}"):
                                     conn = db.get_connection()
                                     c = conn.cursor()
                                     c.execute("UPDATE FieldVisits SET is_canceled = 0 WHERE id = ?", (v_id,))
@@ -554,7 +462,7 @@ def render_page(can_access_visits, is_observer):
 
                     if is_approved == 0 and is_canceled == 0:
                         st.markdown("---")
-                        if st.button("✅ اعتماد وإرسال لمسار التصميم", use_container_width=True, key=f"btn_approve_{v_id}"):
+                        if st.button("✅ اعتماد وإرسال لمسار التصاميم", use_container_width=True, key=f"btn_approve_{v_id}"):
                             import datetime
                             now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                             conn = db.get_connection()
@@ -567,8 +475,8 @@ def render_page(can_access_visits, is_observer):
                                 employee_name=st.session_state.get('employee_name', 'Unknown'),
                                 action_type="اعتماد مشروع",
                                 module="مسار رفع المقاسات",
-                                details=f"تم اعتماد مشروع العميل MHM{v_id:05d} ونقله لمسار التصميم"
+                                details=f"تم اعتماد مشروع العميل MHM{v_id:05d} ونقله لمسار التصاميم"
                             )
-                            st.success("تم اعتماد المشروع وإرساله لمسار التصميم بنجاح!")
+                            st.success("تم اعتماد المشروع وإرساله لمسار التصاميم بنجاح!")
                             time.sleep(1)
                             st.rerun()

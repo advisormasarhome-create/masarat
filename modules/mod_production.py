@@ -200,8 +200,8 @@ def render_page(can_access_production, is_observer):
                 
                 if submit:
                     second_paid = d_link_row[3] if (d_link_row and len(d_link_row) > 3) else 0
-                    if (status == "تم التركيب والتسليم" or progress == 100) and not second_paid:
-                        st.error("⚠️ عذراً: لا يمكن تغيير حالة الإنتاج إلى 'تم التركيب والتسليم' أو الوصول لنسبة إنجاز 100% لأن العميل لم يقم بتسديد الدفعة الثانية والأخيرة في الخزينة بعد.")
+                    if (status in ["جاهز للشحن والتركيب", "تم التركيب والتسليم"]) and not second_paid:
+                        st.error("⚠️ عذراً: لا يمكن تغيير حالة الإنتاج إلى 'جاهز للشحن' أو 'تم التسليم' لأن العميل لم يقم بتسديد الدفعة الثانية والأخيرة (100%) في الخزينة بعد.")
                     else:
                         import datetime
                         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
