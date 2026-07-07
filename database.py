@@ -3,7 +3,105 @@ import os
 import hashlib
 import datetime
 
-import os
+# --- PostgreSQL / Supabase Compatibility Wrapper ---
+class CursorWrapper:
+    def __init__(self, cursor, is_postgres=False):
+        self._cursor = cursor
+        self._is_postgres = is_postgres
+        self._lastrowid = None
+
+    def execute(self, query, params=None):
+        if self._is_postgres:
+            if params is not None:
+                query = query.replace('?', '%s')
+            
+            # Translate common SQLite table creation syntax to PostgreSQL
+            import re
+            query = re.sub(r'DEFAULT\s+"([^"]*)"', r"DEFAULT '\1'", query, flags=re.IGNORECASE)
+            if "CREATE TABLE" in query or "ALTER TABLE" in query:
+                query = query.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
+                query = query.replace("PRIMARY KEY AUTOINCREMENT", "PRIMARY KEY")
+                query = query.replace("DATETIME", "TIMESTAMP")
+                query = query.replace("AUTOINCREMENT", "")
+            
+            try:
+                if params is not None:
+                    self._cursor.execute(query, params)
+                else:
+                    self._cursor.execute(query)
+                
+                # Caching lastrowid for INSERT queries
+                stripped = query.strip().upper()
+                if stripped.startswith("INSERT"):
+                    try:
+                        self._cursor.execute("SELECT lastval()")
+                        self._lastrowid = self._cursor.fetchone()[0]
+                    except:
+                        self._lastrowid = None
+            except Exception as e:
+                # Map PostgreSQL errors to SQLite errors for transparent catch in database.py
+                err_msg = str(e).lower()
+                if "already exists" in err_msg or "duplicate column" in err_msg or "duplicate_column" in err_msg:
+                    raise sqlite3.OperationalError(str(e))
+                elif "unique constraint" in err_msg or "duplicate key" in err_msg or "unique_violation" in err_msg:
+                    raise sqlite3.IntegrityError(str(e))
+                else:
+                    raise e
+        else:
+            if params is not None:
+                self._cursor.execute(query, params)
+            else:
+                self._cursor.execute(query)
+            self._lastrowid = self._cursor.lastrowid
+
+    def executemany(self, query, seq_of_parameters):
+        if self._is_postgres:
+            query = query.replace('?', '%s')
+            try:
+                self._cursor.executemany(query, seq_of_parameters)
+            except Exception as e:
+                err_msg = str(e).lower()
+                if "unique constraint" in err_msg or "duplicate key" in err_msg:
+                    raise sqlite3.IntegrityError(str(e))
+                else:
+                    raise e
+        else:
+            self._cursor.executemany(query, seq_of_parameters)
+
+    def fetchone(self):
+        return self._cursor.fetchone()
+
+    def fetchall(self):
+        return self._cursor.fetchall()
+
+    @property
+    def lastrowid(self):
+        return self._lastrowid
+
+class PgConnectionWrapper:
+    def __init__(self, conn):
+        self._conn = conn
+        try:
+            self._conn.autocommit = True
+        except:
+            pass
+
+    def cursor(self):
+        return CursorWrapper(self._conn.cursor(), is_postgres=True)
+
+    def commit(self):
+        # Already committed in autocommit mode, prevent Transaction aborted issues
+        pass
+
+    def rollback(self):
+        # No-op in autocommit mode
+        pass
+
+    def close(self):
+        try:
+            self._conn.close()
+        except:
+            pass
 
 os.makedirs('customerdata', exist_ok=True)
 DB_PATH = 'customerdata/masar_home.db'
@@ -12,10 +110,47 @@ DAYS_AR = {
     3: "الخميس",  4: "الجمعة",  5: "السبت", 6: "الأحد"
 }
 
+_cached_conn = None
+
 def get_connection():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.execute('PRAGMA journal_mode=WAL')
-    return conn
+    global _cached_conn
+    import streamlit as st
+    db_url = None
+    try:
+        if "db_url" in st.secrets:
+            db_url = st.secrets["db_url"]
+    except:
+        pass
+
+    if db_url:
+        import psycopg2
+        # Check if we have a cached connection and it is alive
+        if _cached_conn is not None:
+            try:
+                # If connection is alive, test it with a fast query
+                if _cached_conn.closed == 0:
+                    c = _cached_conn.cursor()
+                    c.execute("SELECT 1")
+                    c.close()
+                    return PgConnectionWrapper(_cached_conn)
+            except:
+                # Connection dropped, reset it
+                try:
+                    _cached_conn.close()
+                except:
+                    pass
+                _cached_conn = None
+        
+        # Connect to Supabase PostgreSQL (IPv4 Pooler)
+        try:
+            _cached_conn = psycopg2.connect(db_url)
+            return PgConnectionWrapper(_cached_conn)
+        except Exception as e:
+            raise e
+    else:
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        conn.execute('PRAGMA journal_mode=WAL')
+        return conn
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
@@ -61,6 +196,37 @@ def init_db():
     
     init_users(c)
     init_activity_log(c)
+    
+    # Create operational checklist forms logs
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS MaintenanceRequests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            request_date TEXT,
+            problem_desc TEXT,
+            problem_type TEXT,
+            correction_desc TEXT,
+            created_by TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS RationRequests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            request_date TEXT,
+            water_qty TEXT,
+            water_notes TEXT,
+            coffee_qty TEXT,
+            coffee_notes TEXT,
+            tea_qty TEXT,
+            tea_notes TEXT,
+            other_name TEXT,
+            other_qty TEXT,
+            other_notes TEXT,
+            created_by TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
     
     # Create Messages Table (Internal Chat)
     c.execute('''
@@ -244,6 +410,10 @@ def init_db():
         c.execute('ALTER TABLE FieldVisits ADD COLUMN is_approved INTEGER DEFAULT 0')
     except sqlite3.OperationalError:
         pass
+    try:
+        c.execute('ALTER TABLE FieldVisits ADD COLUMN approved_at TEXT DEFAULT ""')
+    except sqlite3.OperationalError:
+        pass
 
     c.execute('CREATE INDEX IF NOT EXISTS idx_contracts_status ON Contracts(status)')
     c.execute('CREATE INDEX IF NOT EXISTS idx_contracts_client ON Contracts(client_name)')
@@ -316,6 +486,33 @@ def init_db():
     
     c.execute('CREATE INDEX IF NOT EXISTS idx_project_designs_visit ON ProjectDesigns(visit_id)')
     c.execute('CREATE INDEX IF NOT EXISTS idx_fieldvisits_approved ON FieldVisits(is_approved, is_canceled)')
+
+    # --- ContractTerminations & CustomerSurveys Tables ---
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS ContractTerminations (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            contract_no TEXT UNIQUE NOT NULL,
+            client_name TEXT NOT NULL,
+            end_date    TEXT DEFAULT "",
+            representative TEXT DEFAULT "",
+            notes       TEXT DEFAULT "",
+            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS CustomerSurveys (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            contract_no     TEXT UNIQUE NOT NULL,
+            client_name     TEXT NOT NULL,
+            design_rating   INTEGER DEFAULT 5,
+            timeline_rating INTEGER DEFAULT 5,
+            response_rating INTEGER DEFAULT 5,
+            spec_rating     INTEGER DEFAULT 5,
+            overall_rating  INTEGER DEFAULT 5,
+            feedback        TEXT DEFAULT "",
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
 
     conn.commit()
     conn.close()
@@ -944,3 +1141,104 @@ def update_contract_files(contract_id, file_paths_str, modified_by):
     ''', (file_paths_str, modified_by, now, contract_id))
     conn.commit()
     conn.close()
+
+
+# ─────────────────────────────────────────────────────────────
+# --- OPERATIONAL FORMS FUNCTIONS (MAINTENANCE & RATION) ---
+# ─────────────────────────────────────────────────────────────
+
+def save_maintenance_request(request_date, problem_desc, problem_type, correction_desc, created_by):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute('''
+        INSERT INTO MaintenanceRequests (request_date, problem_desc, problem_type, correction_desc, created_by)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (request_date, problem_desc, problem_type, correction_desc, created_by))
+    conn.commit()
+    conn.close()
+
+def get_all_maintenance_requests():
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT id, request_date, problem_desc, problem_type, correction_desc, created_by, created_at FROM MaintenanceRequests ORDER BY id DESC")
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+def save_ration_request(request_date, water_qty, water_notes, coffee_qty, coffee_notes, tea_qty, tea_notes, other_name, other_qty, other_notes, created_by):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute('''
+        INSERT INTO RationRequests (request_date, water_qty, water_notes, coffee_qty, coffee_notes, tea_qty, tea_notes, other_name, other_qty, other_notes, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (request_date, water_qty, water_notes, coffee_qty, coffee_notes, tea_qty, tea_notes, other_name, other_qty, other_notes, created_by))
+    conn.commit()
+    conn.close()
+
+def get_all_ration_requests():
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT id, request_date, water_qty, water_notes, coffee_qty, coffee_notes, tea_qty, tea_notes, other_name, other_qty, other_notes, created_by, created_at FROM RationRequests ORDER BY id DESC")
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+
+# --- CONTRACT TERMINATIONS & CUSTOMER SURVEYS ---
+def save_contract_termination(contract_no, client_name, end_date, representative, notes):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute('''
+        INSERT INTO ContractTerminations (contract_no, client_name, end_date, representative, notes)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(contract_no) DO UPDATE SET
+            client_name=excluded.client_name,
+            end_date=excluded.end_date,
+            representative=excluded.representative,
+            notes=excluded.notes
+    ''', (contract_no, client_name, end_date, representative, notes))
+    conn.commit()
+    conn.close()
+
+def get_contract_termination(contract_no):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT id, contract_no, client_name, end_date, representative, notes, created_at FROM ContractTerminations WHERE contract_no = ?", (contract_no,))
+    row = c.fetchone()
+    conn.close()
+    return row
+
+def save_customer_survey(contract_no, client_name, design_rating, timeline_rating, response_rating, spec_rating, overall_rating, feedback):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute('''
+        INSERT INTO CustomerSurveys (contract_no, client_name, design_rating, timeline_rating, response_rating, spec_rating, overall_rating, feedback)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(contract_no) DO UPDATE SET
+            client_name=excluded.client_name,
+            design_rating=excluded.design_rating,
+            timeline_rating=excluded.timeline_rating,
+            response_rating=excluded.response_rating,
+            spec_rating=excluded.spec_rating,
+            overall_rating=excluded.overall_rating,
+            feedback=excluded.feedback
+    ''', (contract_no, client_name, design_rating, timeline_rating, response_rating, spec_rating, overall_rating, feedback))
+    conn.commit()
+    conn.close()
+
+def get_customer_survey(contract_no):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT id, contract_no, client_name, design_rating, timeline_rating, response_rating, spec_rating, overall_rating, feedback, created_at FROM CustomerSurveys WHERE contract_no = ?", (contract_no,))
+    row = c.fetchone()
+    conn.close()
+    return row
+
+def get_all_surveys():
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT id, contract_no, client_name, design_rating, timeline_rating, response_rating, spec_rating, overall_rating, feedback, created_at FROM CustomerSurveys ORDER BY id DESC")
+    rows = c.fetchall()
+    conn.close()
+    return rows
+

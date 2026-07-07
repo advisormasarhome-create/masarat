@@ -1,4 +1,5 @@
 import streamlit as st
+# Pricing module: integrated with contract printing, termination, and surveys
 import database as db
 
 def render_page(can_access_pricing, is_observer):
@@ -56,8 +57,43 @@ def render_page(can_access_pricing, is_observer):
     active_projects = c.fetchall()
     conn.close()
     
-    project_options = {"-- اختر عميلاً/مشروعاً للتسعير --": None}
+    # Search Block in Pricing
+    with st.expander("🔍 البحث المتقدم عن المشروع المراد تسعيره", expanded=False):
+        col_s1_p, col_s2_p, col_s3_p = st.columns(3)
+        with col_s1_p:
+            search_name_p = st.text_input("اسم العميل / المشروع", key="s_name_price")
+        with col_s2_p:
+            search_masar_p = st.text_input("رقم مسارات (مثال: MHM00045)", key="s_masar_price")
+        with col_s3_p:
+            search_furniture_p = st.text_input("نوع الأثاث", key="s_furniture_price")
+
+    is_search_active_p = bool(search_name_p or search_masar_p or search_furniture_p)
+
+    filtered_projects_p = []
     for row in active_projects:
+        v_id = row[0]
+        c_name = row[1]
+        f_type = row[2] or ""
+        
+        if search_name_p and search_name_p.strip().lower() not in c_name.lower():
+            continue
+        if search_masar_p:
+            clean_m = search_masar_p.strip().upper()
+            if clean_m not in f"MHM{v_id:05d}":
+                continue
+        if search_furniture_p and search_furniture_p.strip().lower() not in f_type.lower():
+            continue
+        filtered_projects_p.append(row)
+
+    # Limit to 10 if search is not active
+    if not is_search_active_p:
+        filtered_projects_p = filtered_projects_p[:10]
+        st.info("💡 تعرض القائمة أدناه آخر 10 مشاريع نشطة افتراضياً. للبحث عن مشاريع أقدم، استخدم لوحة البحث المتقدم بالرأس.")
+    else:
+        st.success(f"🔍 تم العثور على {len(filtered_projects_p)} مشروع مطابق لمعايير البحث.")
+
+    project_options = {"-- اختر عميلاً/مشروعاً للتسعير --": None}
+    for row in filtered_projects_p:
         project_options[f"MHM{row[0]:05d} | {row[1]} ({row[2]})"] = row[0]
         
     selected_visit_id = st.session_state.get('selected_pricing_visit_id', None)
@@ -75,7 +111,7 @@ def render_page(can_access_pricing, is_observer):
         index=default_idx,
         key="pricing_project_select"
     )
-    new_visit_id = project_options[selected_project_key]
+    new_visit_id = project_options[selected_project_key] if selected_project_key in project_options else None
     
     if new_visit_id != selected_visit_id:
         st.session_state['selected_pricing_visit_id'] = new_visit_id
@@ -98,6 +134,7 @@ def render_page(can_access_pricing, is_observer):
     saved_workshop_drawing = ""
     is_price_approved = 0
     is_price_paid = 0
+    is_read_only_pricing = False
     if selected_visit_id:
         conn = db.get_connection()
         c = conn.cursor()
@@ -107,6 +144,8 @@ def render_page(can_access_pricing, is_observer):
         if p_row:
             import json
             price_details_str, saved_workshop_drawing, is_price_approved, is_price_paid = p_row
+            is_admin_user = (st.session_state.get('username') == 'Admin' or st.session_state.get('role') == 'Admin')
+            is_read_only_pricing = (is_price_approved == 1 and not is_admin_user)
             if price_details_str:
                 try:
                     saved_pricing_details = json.loads(price_details_str)
@@ -145,17 +184,17 @@ def render_page(can_access_pricing, is_observer):
             if saved_cat in cat_options:
                 cat_idx = cat_options.index(saved_cat)
                 
-            category = st.selectbox("تصنيف المنتج/الأثاث:", cat_options, index=cat_idx)
+            category = st.selectbox("تصنيف المنتج/الأثاث:", cat_options, index=cat_idx, disabled=is_read_only_pricing)
         with col_p2:
             saved_calc_method = saved_pricing_details.get("calc_method", "بالمتر الطولي (Running Meter)")
             calc_options = ["بالمتر الطولي (Running Meter)", "بالمتر المربع (Square Meter)", "سعر مقطوع (Lump Sum)"]
             calc_idx = calc_options.index(saved_calc_method) if saved_calc_method in calc_options else 0
-            calc_method = st.radio("طريقة حساب التسعير:", calc_options, index=calc_idx, horizontal=False)
+            calc_method = st.radio("طريقة حساب التسعير:", calc_options, index=calc_idx, horizontal=False, disabled=is_read_only_pricing)
             
             saved_material = saved_pricing_details.get("material", "MDF ميلامين تركي")
             material_options = ["MDF ميلامين تركي", "MDF ميلامين أسباني", "لاتيه (Blockboard) قشرة طبيعي", "خشب زان طبيعي", "خشب صنوبر/سويدي", "أكريليك مجوف", "خامات أخرى"]
             mat_idx = material_options.index(saved_material) if saved_material in material_options else 0
-            material = st.selectbox("نوع الخامات الرئيسية (المادة):", material_options, index=mat_idx)
+            material = st.selectbox("نوع الخامات الرئيسية (المادة):", material_options, index=mat_idx, disabled=is_read_only_pricing)
             
             # Auto-assign smart default pricing per unit based on material
             material_defaults = {
@@ -169,7 +208,7 @@ def render_page(can_access_pricing, is_observer):
             }
             default_price = material_defaults.get(material, 450.0)
             saved_unit_price = saved_pricing_details.get("unit_price", default_price)
-            unit_price = st.number_input("سعر الوحدة/المتر المعتمد (د.ل):", min_value=0.0, value=float(saved_unit_price), step=50.0)
+            unit_price = st.number_input("سعر الوحدة/المتر المعتمد (د.ل):", min_value=0.0, value=float(saved_unit_price), step=50.0, disabled=is_read_only_pricing)
 
         # Dimensions & quantities
         st.markdown("<h5 style='color: #0077b6; font-family: \"Readex Pro\", sans-serif; margin-top: 15px;'>📏 الأبعاد والكميات</h5>", unsafe_allow_html=True)
@@ -185,25 +224,25 @@ def render_page(can_access_pricing, is_observer):
         
         if calc_method == "سعر مقطوع (Lump Sum)":
             with col_d1:
-                qty = st.number_input("الكمية (عدد القطع):", min_value=1, value=int(saved_qty), step=1)
+                qty = st.number_input("الكمية (عدد القطع):", min_value=1, value=int(saved_qty), step=1, disabled=is_read_only_pricing)
             with col_d2:
                 st.text_input("الطول (متر):", value="غير مطبق", disabled=True)
             with col_d3:
                 st.text_input("الارتفاع/العرض (متر):", value="غير مطبق", disabled=True)
         elif calc_method == "بالمتر المربع (Square Meter)":
             with col_d1:
-                length = st.number_input("الطول الإجمالي (متر):", min_value=0.0, value=float(saved_length), step=0.1)
+                length = st.number_input("الطول الإجمالي (متر):", min_value=0.0, value=float(saved_length), step=0.1, disabled=is_read_only_pricing)
             with col_d2:
-                width = st.number_input("العرض أو الارتفاع (متر):", min_value=0.0, value=float(saved_width), step=0.1)
+                width = st.number_input("العرض أو الارتفاع (متر):", min_value=0.0, value=float(saved_width), step=0.1, disabled=is_read_only_pricing)
             with col_d3:
-                qty = st.number_input("الكمية (عدد القطع):", min_value=1, value=int(saved_qty), step=1)
+                qty = st.number_input("الكمية (عدد القطع):", min_value=1, value=int(saved_qty), step=1, disabled=is_read_only_pricing)
         else: # running meter
             with col_d1:
-                length = st.number_input("الطول الإجمالي (متر):", min_value=0.0, value=float(saved_length), step=0.1)
+                length = st.number_input("الطول الإجمالي (متر):", min_value=0.0, value=float(saved_length), step=0.1, disabled=is_read_only_pricing)
             with col_d2:
                 st.text_input("الارتفاع/العرض (متر):", value="غير مطبق", disabled=True)
             with col_d3:
-                qty = st.number_input("الكمية (عدد القطع):", min_value=1, value=int(saved_qty), step=1)
+                qty = st.number_input("الكمية (عدد القطع):", min_value=1, value=int(saved_qty), step=1, disabled=is_read_only_pricing)
 
         # Additional Expenses
         st.markdown("<h5 style='color: #0077b6; font-family: \"Readex Pro\", sans-serif; margin-top: 15px;'>➕ الإكسسوارات والمصاريف الإضافية</h5>", unsafe_allow_html=True)
@@ -212,11 +251,11 @@ def render_page(can_access_pricing, is_observer):
         saved_trans_cost = saved_pricing_details.get("transport_install", 0.0)
         saved_other_cost = saved_pricing_details.get("other_extra", 0.0)
         with col_e1:
-            accessories_cost = st.number_input("تكلفة المقابض والإكسسوارات (د.ل):", min_value=0.0, value=float(saved_acc_cost), step=25.0)
+            accessories_cost = st.number_input("تكلفة المقابض والإكسسوارات (د.ل):", min_value=0.0, value=float(saved_acc_cost), step=25.0, disabled=is_read_only_pricing)
         with col_e2:
-            transport_install = st.number_input("تكلفة النقل والتركيب (د.ل):", min_value=0.0, value=float(saved_trans_cost), step=25.0)
+            transport_install = st.number_input("تكلفة النقل والتركيب (د.ل):", min_value=0.0, value=float(saved_trans_cost), step=25.0, disabled=is_read_only_pricing)
         with col_e3:
-            other_extra = st.number_input("مصاريف إضافية أخرى (د.ل):", min_value=0.0, value=float(saved_other_cost), step=25.0)
+            other_extra = st.number_input("مصاريف إضافية أخرى (د.ل):", min_value=0.0, value=float(saved_other_cost), step=25.0, disabled=is_read_only_pricing)
 
         # Markups & Discounts
         st.markdown("<h5 style='color: #0077b6; font-family: \"Readex Pro\", sans-serif; margin-top: 15px;'>📈 نسب هامش الربح والخصومات</h5>", unsafe_allow_html=True)
@@ -224,9 +263,9 @@ def render_page(can_access_pricing, is_observer):
         saved_markup = saved_pricing_details.get("markup_pct", 0.0)
         saved_discount = saved_pricing_details.get("discount_pct", 0.0)
         with col_md1:
-            markup_pct = st.number_input("هامش الربح الإضافي (%) - اختياري:", min_value=0.0, value=float(saved_markup), step=1.0)
+            markup_pct = st.number_input("هامش الربح الإضافي (%) - اختياري:", min_value=0.0, value=float(saved_markup), step=1.0, disabled=is_read_only_pricing)
         with col_md2:
-            discount_pct = st.number_input("نسبة الخصم الممنوحة (%) - اختياري:", min_value=0.0, value=float(saved_discount), step=1.0)
+            discount_pct = st.number_input("نسبة الخصم الممنوحة (%) - اختياري:", min_value=0.0, value=float(saved_discount), step=1.0, disabled=is_read_only_pricing)
 
         # Logic computations
         if calc_method == "سعر مقطوع (Lump Sum)":
@@ -286,13 +325,21 @@ def render_page(can_access_pricing, is_observer):
         if not selected_visit_id:
             st.warning("⚠️ يرجى تحديد عميل من قائمة الاختيار في الأعلى ليتم ربط وحفظ السجل باسمه.")
         else:
-            col_act1, col_act2 = st.columns(2)
-            with col_act1:
-                btn_save = st.button("💾 حفظ السجل", use_container_width=True)
-            with col_act2:
-                btn_approve = st.button("💾 حفظ واعتماد السجل", use_container_width=True)
+            if is_read_only_pricing:
+                st.warning("🔒 هذه التسعيرة تم حفظها واعتمادها. التعديل متاح فقط لمدير النظام (الأدمن).")
+                btn_save = False
+                btn_approve = False
+            else:
+                col_act1, col_act2 = st.columns(2)
+                with col_act1:
+                    btn_save = st.button("💾 حفظ السجل", use_container_width=True)
+                with col_act2:
+                    btn_approve = st.button("💾 حفظ واعتماد السجل", use_container_width=True)
                 
             if btn_save or btn_approve:
+                if is_read_only_pricing:
+                    st.error("🔒 عذراً، لا تمتلك الصلاحية لتعديل هذا السجل المعتمد.")
+                    st.stop()
                 
                 # Serialized details
                 import json

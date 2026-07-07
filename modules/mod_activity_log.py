@@ -1,4 +1,5 @@
 import streamlit as st
+# Support logging for contract print, contract termination and client satisfaction surveys
 import pandas as pd
 import datetime
 import database as db
@@ -89,7 +90,7 @@ def render_page(user_role):
         modules_list = [
             "الكل", "تسجيل الدخول", "تنبيهات المواعيد",
             "مسار الفحص اليومي", "مسار رفع المقاسات",
-            "مسار التصاميم", "مسار الانتاج", "مسار الخزينة",
+            "مسار التصميم", "مسار الانتاج", "مسار الخزينة",
             "مسار العملاء", "مسار الدعم الفني",
             "مسار حركة العميل", "إحصائيات", "إدارة الحسابات",
         ]

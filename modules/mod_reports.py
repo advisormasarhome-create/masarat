@@ -20,10 +20,11 @@ def render_page(can_access: bool, is_observer: bool):
         unsafe_allow_html=True,
     )
 
-    tab_financial, tab_technical, tab_logs = st.tabs([
+    tab_financial, tab_technical, tab_logs, tab_surveys = st.tabs([
         "💰 التقارير المالية والتعاقدية",
         "📐 تقارير الفحص والزيارات الفنية",
-        "📋 تقارير الالتزام ونشاط النظام"
+        "📋 تقارير الالتزام ونشاط النظام",
+        "📈 تقارير رضا العملاء والاستبيانات"
     ])
 
     # ────────────────────────────────────────────────
@@ -301,3 +302,56 @@ def render_page(can_access: bool, is_observer: bool):
                     mime="text/csv",
                     use_container_width=True
                 )
+
+    # ────────────────────────────────────────────────
+    # 4. تقارير رضا العملاء والاستبيانات
+    # ────────────────────────────────────────────────
+    with tab_surveys:
+        st.markdown("### 📈 تقارير استبيانات رضا العملاء")
+        surveys = db.get_all_surveys()
+        if not surveys:
+            st.info("📭 لا توجد استبيانات رضا عملاء مسجلة حتى الآن.")
+        else:
+            survey_cols = [
+                "معرف", "رقم العقد", "اسم العميل", "تقييم التصميم", "تقييم الالتزام بالوقت", 
+                "تقييم سرعة الاستجابة", "تقييم مطابقة المواصفات", "التقييم العام", "الملاحظات والمقترحات", "تاريخ المشاركة"
+            ]
+            df_surveys = pd.DataFrame(surveys, columns=survey_cols)
+            
+            avg_design = df_surveys["تقييم التصميم"].mean()
+            avg_time = df_surveys["تقييم الالتزام بالوقت"].mean()
+            avg_resp = df_surveys["تقييم سرعة الاستجابة"].mean()
+            avg_spec = df_surveys["تقييم مطابقة المواصفات"].mean()
+            avg_overall = df_surveys["التقييم العام"].mean()
+            total_surveys = len(df_surveys)
+            
+            m_col1, m_col2, m_col3, m_col4, m_col5 = st.columns(5)
+            m_col1.metric("📐 تقييم التصاميم", f"{avg_design:.2f} / 5")
+            m_col2.metric("⏱️ تقييم الالتزام", f"{avg_time:.2f} / 5")
+            m_col3.metric("📞 تقييم الاستجابة", f"{avg_resp:.2f} / 5")
+            m_col4.metric("🛠️ مطابقة المواصفات", f"{avg_spec:.2f} / 5")
+            m_col5.metric("🌟 التقييم العام", f"{avg_overall:.2f} / 5")
+            
+            st.markdown(f"**عدد الاستبيانات المستلمة:** {total_surveys} استبيان")
+            
+            avg_series = pd.Series({
+                "جودة التصميم": avg_design,
+                "الالتزام بالوقت": avg_time,
+                "سرعة الاستجابة": avg_resp,
+                "مطابقة المواصفات": avg_spec,
+                "التقييم العام": avg_overall
+            })
+            st.markdown("##### 📊 متوسط التقييمات لكل معيار")
+            st.bar_chart(avg_series)
+            
+            st.markdown("##### 📋 تفاصيل الاستبيانات والملاحظات")
+            st.dataframe(df_surveys[["تاريخ المشاركة", "اسم العميل", "رقم العقد", "التقييم العام", "الملاحظات والمقترحات"]], use_container_width=True, hide_index=True)
+            
+            csv_survey_data = df_surveys.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(
+                label="📥 تصدير استبيانات رضا العملاء كـ Excel/CSV",
+                data=csv_survey_data,
+                file_name=f"customer_surveys_report_{datetime.date.today().isoformat()}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )

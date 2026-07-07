@@ -40,6 +40,15 @@ def render_page(can_access_journey, is_observer):
     c.execute("SELECT contract_no, status, value, notes, odoo_no FROM Contracts WHERE client_name = ? OR notes LIKE ?", (v_details[1], f"%MHM{v_id:05d}%"))
     contract_info = c.fetchone()
     
+    # Check termination & survey info
+    term_info = None
+    survey_info = None
+    if contract_info:
+        c.execute("SELECT end_date, representative, notes FROM ContractTerminations WHERE contract_no = ?", (contract_info[0],))
+        term_info = c.fetchone()
+        c.execute("SELECT overall_rating, feedback FROM CustomerSurveys WHERE contract_no = ?", (contract_info[0],))
+        survey_info = c.fetchone()
+
     # Check production info
     c.execute("SELECT assigned_factory, status, progress, notes FROM ProjectProduction WHERE visit_id = ?", (v_id,))
     prod_info = c.fetchone()
@@ -76,7 +85,7 @@ def render_page(can_access_journey, is_observer):
         d_icon = "🟢" if "مكتمل" in design_info[1] else "🔵"
         st.markdown(f"""
         <div style='background-color: #ffffff; border-right: 5px solid #00b4d8; padding: 15px; border-radius: 8px; margin-bottom: 12px;'>
-            <h4 style='color: #0077b6; margin: 0;'>2. مسار التصاميم {d_icon}</h4>
+            <h4 style='color: #0077b6; margin: 0;'>2. مسار التصميم {d_icon}</h4>
             <p style='margin: 5px 0 0 0; font-size: 14px;'>
                 <b>المصمم المسؤول:</b> {design_info[0]} | <b>حالة التصميم:</b> {design_info[1]}<br>
                 <b>الملاحظات:</b> {design_info[2] or 'لا توجد'}
@@ -86,7 +95,7 @@ def render_page(can_access_journey, is_observer):
     else:
         st.markdown("""
         <div style='background-color: #f5f5f5; border-right: 5px solid #9e9e9e; padding: 15px; border-radius: 8px; margin-bottom: 12px; opacity: 0.6;'>
-            <h4 style='color: #616161; margin: 0;'>2. مسار التصاميم ⏳</h4>
+            <h4 style='color: #616161; margin: 0;'>2. مسار التصميم ⏳</h4>
             <p style='margin: 5px 0 0 0; font-size: 14px;'>بانتظار تعيين مصمم وبدء العمل على التصاميم المقترحة للعميل.</p>
         </div>
         """, unsafe_allow_html=True)
@@ -129,6 +138,27 @@ def render_page(can_access_journey, is_observer):
         <div style='background-color: #f5f5f5; border-right: 5px solid #9e9e9e; padding: 15px; border-radius: 8px; margin-bottom: 12px; opacity: 0.6;'>
             <h4 style='color: #616161; margin: 0;'>4. مسار الإنتاج والتصنيع ⏳</h4>
             <p style='margin: 5px 0 0 0; font-size: 14px;'>بانتظار تحويل المشروع للمصنع لبدء عملية التصنيع والقص والتركيب بعد إمضاء العقد.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    # 5. Termination & Survey stage
+    if term_info or survey_info:
+        term_icon = "🟢" if term_info else "🟡"
+        survey_tag = f"<br>🌟 <b>تقييم رضا العميل:</b> {survey_info[0]} / 5 | <b>الملاحظات:</b> {survey_info[1] or 'لا توجد'}" if survey_info else "<br>⏳ <b>استبيان الرضا:</b> لم يتم تعبئته بعد."
+        term_notes_tag = f"<br>📝 <b>ملاحظات الاستلام:</b> {term_info[2]}" if term_info and term_info[2] else ""
+        st.markdown(f"""
+        <div style='background-color: #ffffff; border-right: 5px solid #d90429; padding: 15px; border-radius: 8px; margin-bottom: 12px;'>
+            <h4 style='color: #d90429; margin: 0;'>5. إشعار إنهاء التعاقد واستبيان الرضا {term_icon}</h4>
+            <p style='margin: 5px 0 0 0; font-size: 14px;'>
+                <b>تاريخ إنهاء التعاقد:</b> {term_info[0] if term_info else 'لم ينتهِ بعد'} | <b>المستلم ممثل الشركة:</b> {term_info[1] if term_info else 'غير محدد'}{term_notes_tag}{survey_tag}
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div style='background-color: #f5f5f5; border-right: 5px solid #9e9e9e; padding: 15px; border-radius: 8px; margin-bottom: 12px; opacity: 0.6;'>
+            <h4 style='color: #616161; margin: 0;'>5. إشعار إنهاء التعاقد واستبيان الرضا ⏳</h4>
+            <p style='margin: 5px 0 0 0; font-size: 14px;'>بانتظار إتمام المشروع وإصدار إشعار إنهاء التعاقد وتعبئة استبيان رضا العميل.</p>
         </div>
         """, unsafe_allow_html=True)
         

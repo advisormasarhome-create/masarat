@@ -1,4 +1,5 @@
 import streamlit as st
+# Version 1.5.0: Added contract printing, termination notice, and satisfaction survey integration.
 import pandas as pd
 import database as db
 import importlib
@@ -1676,6 +1677,20 @@ elif choice == "👥 مسار العملاء":
                 contracts = c.fetchall()
                 conn.close()
                 
+                # Search Block in Tab 2 (CRM Customers List)
+                with st.expander("🔍 البحث المتقدم في أرشيف العملاء", expanded=False):
+                    col_s1_c, col_s2_c, col_s3_c, col_s4_c = st.columns(4)
+                    with col_s1_c:
+                        search_name_c = st.text_input("اسم العميل / المشروع", key="s_name_crm")
+                    with col_s2_c:
+                        search_masar_c = st.text_input("رقم مسارات (مثال: MHM00045)", key="s_masar_crm")
+                    with col_s3_c:
+                        search_odoo_c = st.text_input("رقم أودو", key="s_odoo_crm")
+                    with col_s4_c:
+                        search_dates_c = st.date_input("الفترة الزمنية (من - إلى)", value=(), key="s_dates_crm")
+
+                is_search_active_c = bool(search_name_c or search_masar_c or search_odoo_c or (len(search_dates_c) == 2))
+                
                 def get_odoo_no(v_id, client_n):
                     if v_id in designs:
                         return designs[v_id]
@@ -1710,6 +1725,32 @@ elif choice == "👥 مسار العملاء":
                     phone = latest_v[2] or "غير محدد"
                     address = latest_v[3] or "غير محدد"
                     
+                    # Apply search filters
+                    if search_name_c and search_name_c.strip().lower() not in name.lower():
+                        continue
+                    if search_masar_c:
+                        clean_m = search_masar_c.strip().upper()
+                        if not any(clean_m in m_no for m_no in masarat_nos):
+                            continue
+                    if search_odoo_c:
+                        clean_o = search_odoo_c.strip().lower()
+                        if not any(clean_o in o_no.lower() for o_no in odoo_nos):
+                            continue
+                    if len(search_dates_c) == 2:
+                        start_d, end_d = search_dates_c
+                        date_match = False
+                        for v in customer_visits:
+                            v_date = v[6]
+                            try:
+                                v_date_parsed = datetime.datetime.strptime(v_date, "%Y-%m-%d").date()
+                                if start_d <= v_date_parsed <= end_d:
+                                    date_match = True
+                                    break
+                            except:
+                                continue
+                        if not date_match:
+                            continue
+                            
                     furniture_list = []
                     for v in customer_visits:
                         f_type = v[4]
@@ -1729,131 +1770,189 @@ elif choice == "👥 مسار العملاء":
                         "العنوان": address,
                         "الأثاث المطلوب": furniture_str
                     })
+                    
+                # Limit to 10 if search is not active
+                if not is_search_active_c:
+                    formatted_customers = formatted_customers[:10]
+                    st.info("💡 يعرض الجدول أدناه آخر 10 عملاء نشطين افتراضياً. للبحث عن عملاء أقدم، استخدم لوحة البحث المتقدم بالرأس.")
+                else:
+                    st.success(f"🔍 تم العثور على {len(formatted_customers)} عميل مطابق لمعايير البحث.")
                 
-                # Render HTML table with links to customer profile
+                # Choose customer to view profile without browser reload (which causes logouts)
+                st.markdown("##### 🎯 لعرض ملف العميل التفصيلي وسجل مشاريعه، اختر اسمه من القائمة المنسدلة:")
+                customer_names = ["-- اختر اسماً من القائمة --"] + [r["الاسم"] for r in formatted_customers]
+                selected_c = st.selectbox("اختر العميل لعرض ملفه التفصيلي وسجل مشاريعة:", customer_names, label_visibility="collapsed", key="crm_view_select")
+                if selected_c != "-- اختر اسماً من القائمة --":
+                    st.session_state['view_customer_profile'] = selected_c
+                    st.rerun()
+                
+                # Render HTML table with read-only client names (to prevent broken HTML links from causing resets)
                 html_rows = ""
                 for idx, r in enumerate(formatted_customers):
-                    c_link = f'<a href="?view_customer={r["الاسم"]}" target="_self" style="color:#0077b6; text-decoration:underline; font-weight:bold;">{r["الاسم"]}</a>'
-                    html_rows += f"""
-                    <tr style="border-bottom:1px solid #e0e0e0; hover: background-color:#f5f5f5;">
-                        <td style="padding:10px; text-align:center;">{idx+1}</td>
-                        <td style="padding:10px; font-weight:bold;">{c_link}</td>
-                        <td style="padding:10px; text-align:center; color:#03045e; font-weight:bold;">{r["عدد المشاريع"]}</td>
-                        <td style="padding:10px; direction:ltr; text-align:right;">{r["أرقام مسارات"]}</td>
-                        <td style="padding:10px; direction:ltr; text-align:right;">{r["أرقام أودو"]}</td>
-                        <td style="padding:10px; font-family:monospace; text-align:right;">{r["الهاتف"]}</td>
-                        <td style="padding:10px;">{r["العنوان"]}</td>
-                        <td style="padding:10px; font-size:13px; color:gray;">{r["الأثاث المطلوب"]}</td>
-                    </tr>
-                    """
+                    c_display = f'<span style="color:#0077b6; font-weight:bold;">{r["الاسم"]}</span>'
+                    html_rows += f'<tr style="border-bottom:1px solid #e0e0e0;"><td style="padding:10px; text-align:center;">{idx+1}</td><td style="padding:10px; font-weight:bold;">{c_display}</td><td style="padding:10px; text-align:center; color:#03045e; font-weight:bold;">{r["عدد المشاريع"]}</td><td style="padding:10px; direction:ltr; text-align:right;">{r["أرقام مسارات"]}</td><td style="padding:10px; direction:ltr; text-align:right;">{r["أرقام أودو"]}</td><td style="padding:10px; font-family:monospace; text-align:right;">{r["الهاتف"]}</td><td style="padding:10px;">{r["العنوان"]}</td><td style="padding:10px; font-size:13px; color:gray;">{r["الأثاث المطلوب"]}</td></tr>'
                 
-                html_table = f"""
-                <div style="overflow-x:auto; direction:rtl;">
-                    <table style="width:100%; border-collapse:collapse; text-align:right; font-family:'Readex Pro', sans-serif; background-color:white; border-radius:10px; overflow:hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
-                        <thead>
-                            <tr style="background: linear-gradient(135deg, #0077b6 0%, #023e8a 100%); color:white;">
-                                <th style="padding:12px; text-align:center; border-top-right-radius:8px;">#</th>
-                                <th style="padding:12px;">اسم العميل (انقر للملف)</th>
-                                <th style="padding:12px; text-align:center;">عدد المشاريع</th>
-                                <th style="padding:12px; text-align:right;">أرقام مسارات</th>
-                                <th style="padding:12px; text-align:right;">أرقام أودو</th>
-                                <th style="padding:12px; text-align:right;">الهاتف</th>
-                                <th style="padding:12px;">العنوان</th>
-                                <th style="padding:12px; border-top-left-radius:8px;">الأثاث المطلوب</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {html_rows}
-                        </tbody>
-                    </table>
-                </div>
-                """
+                html_table = f'<div style="overflow-x:auto; direction:rtl;"><table style="width:100%; border-collapse:collapse; text-align:right; font-family:\'Readex Pro\', sans-serif; background-color:white; border-radius:10px; overflow:hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.03);"><thead><tr style="background: linear-gradient(135deg, #0077b6 0%, #023e8a 100%); color:white;"><th style="padding:12px; text-align:center; border-top-right-radius:8px;">#</th><th style="padding:12px;">اسم العميل</th><th style="padding:12px; text-align:center;">عدد المشاريع</th><th style="padding:12px; text-align:right;">أرقام مسارات</th><th style="padding:12px; text-align:right;">أرقام أودو</th><th style="padding:12px; text-align:right;">الهاتف</th><th style="padding:12px;">العنوان</th><th style="padding:12px; border-top-left-radius:8px;">الأثاث المطلوب</th></tr></thead><tbody>{html_rows}</tbody></table></div>'
                 st.markdown(html_table, unsafe_allow_html=True)
             else:
                 st.info("لا يوجد عملاء مسجلين حالياً.")
             
-    with tab3:
-        visits = db.get_all_field_visits()
-        if not visits:
-            st.info("لا يوجد عملاء مسجلين حالياً للتعديل أو الحذف.")
-        else:
-            st.markdown("<h3>تعديل بيانات العميل أو حذفه</h3>", unsafe_allow_html=True)
-            customer_dict = {f"MHM{v[0]:05d} | الاسم: {v[1]}": v for v in visits}
-            
-            selected_customer_str = st.selectbox("اختر العميل للتعديل أو الحذف:", list(customer_dict.keys()))
-            selected_v = customer_dict[selected_customer_str]
-            
-            v_id = selected_v[0]
-            c_name = selected_v[1]
-            c_phone = selected_v[2]
-            c_address = selected_v[3]
-            c_furniture = selected_v[4]
-            c_status = selected_v[5]
-            
-            with st.form("edit_customer_form"):
-                new_name = st.text_input("اسم العميل *", value=c_name)
-                new_phone = st.text_input("رقم الهاتف", value=c_phone if c_phone else "")
-                new_address = st.text_area("العنوان", value=c_address if c_address else "")
-                new_furniture = st.text_input("نوع الأثاث المطلوب", value=c_furniture if c_furniture else "")
+        with tab3:
+            visits = db.get_all_field_visits()
+            if not visits:
+                st.info("لا يوجد عملاء مسجلين حالياً للتعديل أو الحذف.")
+            else:
+                st.markdown("<h3>تعديل بيانات العميل أو حذفه</h3>", unsafe_allow_html=True)
                 
-                col_btn1, col_btn2 = st.columns(2)
-                with col_btn1:
-                    if is_observer:
-                        update_btn = False
-                    else:
-                        update_btn = st.form_submit_button("💾 حفظ التعديلات")
-                with col_btn2:
-                    if not can_delete:
-                        delete_btn = False
-                    else:
-                        delete_btn = st.form_submit_button("🗑️ حذف العميل نهائياً")
+                # Search Block in Tab 3 (CRM Edit/Delete Customer)
+                with st.expander("🔍 البحث المتقدم عن العميل المطلوب تعديله/حذفه", expanded=False):
+                    col_s1_e, col_s2_e, col_s3_e, col_s4_e = st.columns(4)
+                    with col_s1_e:
+                        search_name_e = st.text_input("اسم العميل", key="s_name_crm_edit")
+                    with col_s2_e:
+                        search_masar_e = st.text_input("رقم مسارات (مثال: MHM00045)", key="s_masar_crm_edit")
+                    with col_s3_e:
+                        search_odoo_e = st.text_input("رقم أودو", key="s_odoo_crm_edit")
+                    with col_s4_e:
+                        search_dates_e = st.date_input("الفترة الزمنية (من - إلى)", value=(), key="s_dates_crm_edit")
                 
-                if update_btn:
-                    if new_name:
-                        # Update field visit record to keep database in sync
-                        # Get full record first
-                        import datetime
-                        now_str = datetime.datetime.now().strftime("%Y-%m-%d %I:%M %p")
-                        new_modifier = st.session_state.get('username', 'Unknown')
-                        db.update_field_visit(
-                            v_id, new_name, new_phone, new_address, new_furniture, 
-                            c_status, selected_v[6], selected_v[7], selected_v[8], selected_v[9], 
-                            selected_v[13] if len(selected_v) > 13 else "", 
-                            selected_v[14] if len(selected_v) > 14 else "", 
-                            selected_v[15] if len(selected_v) > 15 else "", 
-                            selected_v[16] if len(selected_v) > 16 else "", 
-                            new_modifier, now_str
-                        )
+                # Fetch Odoo mapping
+                conn = db.get_connection()
+                c = conn.cursor()
+                c.execute("SELECT visit_id, odoo_no FROM ProjectDesigns")
+                designs_e = {row[0]: row[1].strip() for row in c.fetchall() if row[1] and row[1].strip()}
+                c.execute("SELECT client_name, odoo_no, notes FROM Contracts")
+                contracts_e = c.fetchall()
+                conn.close()
+                
+                def get_visit_odoo_e(v_id, client_n):
+                    if v_id in designs_e:
+                        return designs_e[v_id]
+                    for client_name, odoo_no, notes in contracts_e:
+                        if odoo_no and odoo_no.strip():
+                            if client_name == client_n:
+                                return odoo_no.strip()
+                            if notes and f"MHM{v_id:05d}" in notes:
+                                return odoo_no.strip()
+                    return ""
+                
+                is_search_active_e = bool(search_name_e or search_masar_e or search_odoo_e or (len(search_dates_e) == 2))
+                
+                filtered_visits_e = []
+                for v in visits:
+                    v_id = v[0]
+                    v_name = v[1]
+                    v_date = v[6]
+                    v_odoo = get_visit_odoo_e(v_id, v_name)
+                    
+                    # Apply filters
+                    if search_name_e and search_name_e.strip().lower() not in v_name.lower():
+                        continue
+                    if search_masar_e:
+                        clean_m = search_masar_e.strip().upper()
+                        if clean_m not in f"MHM{v_id:05d}":
+                            continue
+                    if search_odoo_e and search_odoo_e.strip().lower() not in v_odoo.lower():
+                        continue
+                    if len(search_dates_e) == 2:
+                        start_d, end_d = search_dates_e
+                        try:
+                            v_date_parsed = datetime.datetime.strptime(v_date, "%Y-%m-%d").date()
+                            if not (start_d <= v_date_parsed <= end_d):
+                                continue
+                        except:
+                            continue
+                    
+                    filtered_visits_e.append(v)
+                    
+                # Limit to 10 if search is not active
+                if not is_search_active_e:
+                    filtered_visits_e = filtered_visits_e[:10]
+                    st.info("💡 تعرض القائمة أدناه آخر 10 عملاء نشطين افتراضياً. للبحث عن عملاء أقدم، استخدم لوحة البحث المتقدم بالرأس.")
+                else:
+                    st.success(f"🔍 تم العثور على {len(filtered_visits_e)} عميل مطابق لمعايير البحث.")
+                    
+                if not filtered_visits_e:
+                    st.warning("⚠️ لا توجد نتائج مطابقة لمعايير البحث.")
+                    # Fallback to avoid selectbox error on empty list
+                    selected_v = None
+                else:
+                    customer_dict = {f"MHM{v[0]:05d} | الاسم: {v[1]}": v for v in filtered_visits_e}
+                    selected_customer_str = st.selectbox("اختر العميل للتعديل أو الحذف:", list(customer_dict.keys()))
+                    selected_v = customer_dict[selected_customer_str]
+                    
+                if selected_v:
+                    v_id = selected_v[0]
+                    c_name = selected_v[1]
+                    c_phone = selected_v[2]
+                    c_address = selected_v[3]
+                    c_furniture = selected_v[4]
+                    c_status = selected_v[5]
+                
+                with st.form("edit_customer_form"):
+                    new_name = st.text_input("اسم العميل *", value=c_name)
+                    new_phone = st.text_input("رقم الهاتف", value=c_phone if c_phone else "")
+                    new_address = st.text_area("العنوان", value=c_address if c_address else "")
+                    new_furniture = st.text_input("نوع الأثاث المطلوب", value=c_furniture if c_furniture else "")
+                    
+                    col_btn1, col_btn2 = st.columns(2)
+                    with col_btn1:
+                        if is_observer:
+                            update_btn = False
+                        else:
+                            update_btn = st.form_submit_button("💾 حفظ التعديلات")
+                    with col_btn2:
+                        if not can_delete:
+                            delete_btn = False
+                        else:
+                            delete_btn = st.form_submit_button("🗑️ حذف العميل نهائياً")
+                    
+                    if update_btn:
+                        if new_name:
+                            # Update field visit record to keep database in sync
+                            # Get full record first
+                            import datetime
+                            now_str = datetime.datetime.now().strftime("%Y-%m-%d %I:%M %p")
+                            new_modifier = st.session_state.get('username', 'Unknown')
+                            db.update_field_visit(
+                                v_id, new_name, new_phone, new_address, new_furniture, 
+                                c_status, selected_v[6], selected_v[7], selected_v[8], selected_v[9], 
+                                selected_v[13] if len(selected_v) > 13 else "", 
+                                selected_v[14] if len(selected_v) > 14 else "", 
+                                selected_v[15] if len(selected_v) > 15 else "", 
+                                selected_v[16] if len(selected_v) > 16 else "", 
+                                new_modifier, now_str
+                            )
+                            db.log_activity(
+                                username=st.session_state.get('username', 'Unknown'),
+                                employee_name=st.session_state.get('employee_name', 'Unknown'),
+                                action_type="تعديل",
+                                module="مسار العملاء",
+                                details=f"تم تعديل بيانات العميل: {new_name}"
+                            )
+                            st.session_state.success_msg = f"تم تعديل بيانات العميل '{new_name}' بنجاح!"
+                            st.rerun()
+                        else:
+                            st.error("⚠️ الرجاء إدخال اسم العميل كحد أدنى.")
+                            
+                    if delete_btn:
+                        # To keep referential integrity, we drop from FieldVisits
+                        conn = db.get_connection()
+                        c = conn.cursor()
+                        c.execute('DELETE FROM FieldVisits WHERE id=?', (v_id,))
+                        conn.commit()
+                        conn.close()
+                        
                         db.log_activity(
                             username=st.session_state.get('username', 'Unknown'),
                             employee_name=st.session_state.get('employee_name', 'Unknown'),
-                            action_type="تعديل",
+                            action_type="حذف",
                             module="مسار العملاء",
-                            details=f"تم تعديل بيانات العميل: {new_name}"
+                            details=f"تم حذف العميل: {c_name}"
                         )
-                        st.session_state.success_msg = f"تم تعديل بيانات العميل '{new_name}' بنجاح!"
+                        st.session_state.success_msg = f"تم حذف العميل '{c_name}' نهائياً!"
                         st.rerun()
-                    else:
-                        st.error("⚠️ الرجاء إدخال اسم العميل كحد أدنى.")
-                        
-                if delete_btn:
-                    # To keep referential integrity, we drop from FieldVisits
-                    conn = db.get_connection()
-                    c = conn.cursor()
-                    c.execute('DELETE FROM FieldVisits WHERE id=?', (v_id,))
-                    conn.commit()
-                    conn.close()
-                    
-                    db.log_activity(
-                        username=st.session_state.get('username', 'Unknown'),
-                        employee_name=st.session_state.get('employee_name', 'Unknown'),
-                        action_type="حذف",
-                        module="مسار العملاء",
-                        details=f"تم حذف العميل: {c_name}"
-                    )
-                    st.session_state.success_msg = f"تم حذف العميل '{c_name}' نهائياً!"
-                    st.rerun()
-
+    
 elif choice == "🛠️ مسار الدعم الفني":
     if not can_access_helpdesk:
         st.error("🔒 عذراً، ليس لديك الصلاحية للوصول إلى هذا القسم.")

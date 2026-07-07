@@ -118,6 +118,7 @@ def render_page(can_access_finance, is_observer):
                                 c.execute('''
                                     UPDATE ProjectDesigns
                                     SET price_is_paid = 1,
+                                        is_sent_to_production = 1,
                                         odoo_no = ?
                                     WHERE visit_id = ?
                                 ''', (odoo_input.strip(), v_id))
